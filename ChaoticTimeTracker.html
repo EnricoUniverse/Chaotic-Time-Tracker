@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Chaotic Time Tracker</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --container-bg: #1E1E1E;
+            --shadow-color: rgba(0, 0, 0, 0.7);
+            --corner-radius: 16px;
+            --spacing: 12px;
+            --modal-bg: #252525;
+            --text-muted: #888;
+            --text-main: #E0E0E0;
+            --accent: #4CAF50;
+            --pause-color: #FFC107;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            transition: background-color 0.3s;
+        }
+
+        /* --- Main Layout --- */
+        .app-container {
+            width: 800px;
+            max-height: 90vh;
+            background-color: var(--container-bg);
+            padding: 20px;
+            border-radius: var(--corner-radius);
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            position: relative;
+            border: 1px solid transparent;
+            transition: border-color 0.3s;
+        }
+
+        /* Visual indicator when paused */
+        body.is-paused .app-container {
+            border-color: rgba(255, 193, 7, 0.3);
+        }
+        body.is-paused .total-value {
+            color: var(--pause-color);
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 5px;
+        }
+
+        .app-title-input {
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 1.2rem;
+            color: var(--text-main);
+            font-weight: 700;
+            background-color: transparent !important;
+            background: none !important;
+            border: none !important;
+            border-bottom: 2px solid transparent !important;
+            box-shadow: none !important;
+            padding: 0 0 2px 0;
+            width: 300px;
+            outline: none;
+            cursor: text;
+            transition: border-color 0.2s;
+            -webkit-appearance: none;
+        }
+        .app-title-input:hover { opacity: 0.8; }
+        .app-title-input:focus { border-bottom: 2px solid #555 !important; }
+
+        .total-time-container {
+            background: rgba(255,255,255,0.05);
+            padding: 5px 15px;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .total-label { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 1px;}
+        .total-value { font-family: monospace; font-size: 1.2rem; font-weight: bold; color: var(--text-main); transition: color 0.3s;}
+
+        .header-actions { display: flex; gap: 10px; align-items: center; }
+
+        /* Keep header buttons visually consistent and restore previous look.
+           All header buttons now share the same height; pause button keeps
+           a fixed width so the glyph swap doesn't shift layout. */
+        .btn-header {
+            background: transparent;
+            border: 1px solid #444;
+            color: #666;
+            padding: 0 10px;
+            height: 36px;                /* consistent height */
+            line-height: 36px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            min-width: 32px;
+        }
+        .btn-header:hover { border-color: #888; color: white; background: rgba(255,255,255,0.05); }
+
+        .btn-reset { font-size: 0.7rem; text-transform: uppercase; padding: 0 8px; }
+        .btn-reset:hover { border-color: #EF5350; color: #EF5350; background: rgba(239, 83, 80, 0.1); }
+
+        /* Pause button: fixed square area so glyph width change doesn't move others */
+        .btn-pause {
+            width: 40px;                /* fixed width */
+            height: 36px;               /* matches header button height */
+            padding: 0;
+            font-size: 18px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+        }
+        .btn-pause .icon {
+            display: inline-block;
+            line-height: 1;
+            width: 18px; /* consistent glyph container */
+            text-align: center;
+        }
+        .btn-pause:hover { border-color: var(--pause-color); color: var(--pause-color); background: rgba(255, 193, 7, 0.06); }
+        .btn-pause.active { border-color: var(--pause-color); color: var(--pause-color); background: rgba(255, 193, 7, 0.12); }
+
+        /* Timeline */
+        .timeline-container {
+            background: #000000;
+            height: 50px;
+            min-height: 50px;
+            border-radius: var(--corner-radius);
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+            display: flex;
+            overflow: hidden;
+            position: relative;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: background-color 0.3s ease;
+        }
+
+        .timeline-segment {
+            height: 100%;
+            transition: flex-grow 0.5s linear;
+            position: relative;
+            min-width: 0;
+            flex-basis: 0;
+        }
+
+        .timeline-segment.shrinking {
+            flex-grow: 0.0001 !important;
+            border: none;
+        }
+
+        /* Timeline Tooltip */
+        #timeline-tooltip {
+            position: fixed;
+            background: rgba(30, 30, 30, 0.95);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.1s;
+            z-index: 1000;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            transform: translate(-50%, -130%);
+            white-space: nowrap;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        #tooltip-name { font-weight: bold; display: block; margin-bottom: 2px; color: #ccc;}
+        #tooltip-stats { font-family: monospace; color: #fff;}
+
+        /* --- Grid --- */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            grid-auto-rows: 140px;
+            gap: var(--spacing);
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .grid::-webkit-scrollbar { width: 8px; }
+        .grid::-webkit-scrollbar-track { background: transparent; }
+        .grid::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        .grid::-webkit-scrollbar-thumb:hover { background: #444; }
+
+        .card {
+            border-radius: var(--corner-radius);
+            position: relative;
+            cursor: pointer;
+            transition:
+                transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+                box-shadow 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+                opacity 0.3s;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 8px 0 var(--shadow-color);
+            border: 3px solid transparent;
+            background-clip: padding-box;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .card:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 13px 0 var(--shadow-color);
+            z-index: 10;
+        }
+
+        .card:active {
+            transform: translateY(-2px) scale(0.98) !important;
+            box-shadow: 0 5px 0 var(--shadow-color) !important;
+            transition: transform 0.05s ease-out, box-shadow 0.05s ease-out;
+        }
+
+        .card.active {
+            border-color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 0 var(--shadow-color);
+        }
+
+        /* Dim cards when paused to indicate inactivity */
+        body.is-paused .card:not(:hover) {
+            opacity: 0.7;
+        }
+
+        .card h2 { margin: 0; font-size: 1rem; text-align: center; word-break: break-word; padding: 0 5px; line-height: 1.2; }
+        .card .time { font-size: 1.2rem; font-weight: bold; margin-top: 8px; font-variant-numeric: tabular-nums; }
+        .card .percent { font-size: 0.75rem; opacity: 0.7; margin-top: 2px; }
+
+        /* Card Actions */
+        .card-actions {
+            position: absolute;
+            top: 5px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 5px;
+            box-sizing: border-box;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .card:hover .card-actions { opacity: 1; }
+
+        .action-btn {
+            background: rgba(0,0,0,0.6);
+            border: none;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 0.8rem;
+            backdrop-filter: blur(2px);
+            transition: all 0.2s;
+        }
+        .action-btn:hover { background: rgba(0,0,0,0.9); transform: scale(1.1); }
+        .btn-del:hover { background: #B71C1C; color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+
+        /* Add New Card */
+        .card-add {
+            background: rgba(255,255,255,0.03);
+            border: 2px dashed rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.2);
+            box-shadow: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .card-add:hover {
+            border-color: rgba(255,255,255,0.3);
+            color: white;
+            background: rgba(255,255,255,0.05);
+            transform: translateY(-2px);
+            box-shadow: none;
+        }
+        .card-add:active { transform: translateY(0) scale(0.98); }
+        .add-icon { font-size: 3rem; font-weight: 100; }
+
+        /* Drag & Drop visual */
+        .card.dragging { opacity: 0.45; transform: scale(0.98); }
+        .card.drag-over { outline: 3px dashed rgba(255,255,255,0.12); transform: translateY(-6px) scale(1.02); z-index: 20; }
+
+        /* Drag hint (arrow) */
+        .drag-hint {
+            position: absolute;
+            top: 8px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.5);
+            font-size: 14px;
+            color: white;
+            z-index: 30;
+        }
+        .card.drag-over .drag-hint { display: flex; }
+        .card[data-insert-after="true"] .drag-hint { right: 8px; left: auto; }
+        .card[data-insert-after="false"] .drag-hint { left: 8px; right: auto; }
+
+        /* --- Modals --- */
+        .modal-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            border-radius: var(--corner-radius);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            background: var(--modal-bg);
+            padding: 25px;
+            border-radius: var(--corner-radius);
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.9);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .modal-title { margin: 0; font-size: 1.2rem; color: #fff; }
+        .modal-desc { margin: 0; color: #aaa; font-size: 0.9rem; line-height: 1.4; }
+        label { font-size: 0.8rem; color: #888; margin-bottom: -5px; display: block;}
+
+        input[type="text"], input[type="number"], select {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid #444;
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+        }
+        input[type="text"]:focus, input[type="number"]:focus, select:focus { border-color: #666; }
+
+        .color-picker-wrapper { display: flex; align-items: center; gap: 10px; }
+
+        input[type="color"] {
+            -webkit-appearance: none; border: none; width: 50px; height: 50px; cursor: pointer; background: none; padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 8px; border: 1px solid #555;}
+
+        /* Settings Rows */
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .setting-row:last-child { border-bottom: none; }
+        .setting-label { font-size: 0.9rem; color: #ddd; }
+
+        input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; accent-color: var(--accent); }
+        .setting-input-group { display: flex; align-items: center; gap: 5px; }
+        .small-input { width: 60px !important; padding: 5px !important; text-align: center; }
+        .small-select { width: 90px !important; padding: 5px !important; cursor: pointer;}
+
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+
+        .btn-modal { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; }
+        .btn-cancel { background: transparent; color: #888; }
+        .btn-cancel:hover { color: white; background: rgba(255,255,255,0.05); }
+        .btn-save { background: white; color: black; }
+        .btn-save:hover { background: #ccc; }
+        .btn-confirm-delete { background: #B71C1C; color: white; }
+        .btn-confirm-delete:hover { background: #D32F2F; }
+        .btn-ok { background: #444; color: white; }
+        .btn-ok:hover { background: #555; }
+    </style>
+</head>
+<body>
+
+    <div id="timeline-tooltip">
+        <span id="tooltip-name">Activity</span>
+        <span id="tooltip-stats">00:00:00 (0%)</span>
+    </div>
+
+    <div class="app-container">
+
+        <div class="header">
+            <input type="text" class="app-title-input" value="Chaotic Time Tracker" onchange="saveData()">
+            <div class="header-actions">
+                <div class="total-time-container">
+                    <span class="total-label">Total Time</span>
+                    <span class="total-value" id="total-time-display">00:00:00</span>
+                </div>
+
+                <!-- Pause Button (only button with modified sizing) -->
+                <button class="btn-header btn-pause" id="btn-pause" onclick="togglePause()" title="Pause/Resume Tracking" aria-label="Pause or resume tracking">
+                    <span class="icon" id="pause-icon">⏸</span>
+                </button>
+
+                <button class="btn-header" onclick="openSettings()" title="Settings">⚙️</button>
+                <button class="btn-header btn-reset" onclick="askResetData()" title="Reset Tracking">Reset</button>
+            </div>
+        </div>
+
+        <div class="timeline-container" id="timeline"></div>
+
+        <div class="grid" id="grid"></div>
+
+        <!-- --- MODALS --- -->
+
+        <div class="modal-overlay" id="editModal">
+            <div class="modal-content">
+                <h3 class="modal-title" id="modal-title-text">Edit Activity</h3>
+                <label>Name</label>
+                <input type="text" id="edit-name" placeholder="Activity Name" onkeydown="handleInputKey(event)">
+                <label>Color</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="edit-color">
+                    <span style="font-size:0.8rem; color:#888;">Pick a color</span>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-modal btn-cancel" onclick="closeModal('editModal')">Cancel</button>
+                    <button class="btn-modal btn-save" id="modal-save-btn" onclick="saveEdit()">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="settingsModal">
+            <div class="modal-content">
+                <h3 class="modal-title">Settings</h3>
+                <div class="setting-row">
+                    <span class="setting-label">Offline Tracking</span>
+                    <input type="checkbox" id="setting-offline">
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Rolling Window</span>
+                    <div class="setting-input-group">
+                        <input type="checkbox" id="setting-rolling" onchange="toggleRollingInput()">
+                        <input type="number" id="setting-rolling-value" class="small-input" min="1">
+                        <select id="setting-rolling-unit" class="small-select">
+                            <option value="min">Minutes</option>
+                            <option value="hr">Hours</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-modal btn-cancel" onclick="closeModal('settingsModal')">Cancel</button>
+                    <button class="btn-modal btn-save" onclick="saveSettings()">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="deleteModal">
+            <div class="modal-content">
+                <h3 class="modal-title">Delete Activity?</h3>
+                <p class="modal-desc">This will remove the card. Historical data for today will remain in the timeline but will be grayed out.</p>
+                <div class="modal-actions">
+                    <button class="btn-modal btn-cancel" onclick="closeModal('deleteModal')">Cancel</button>
+                    <button class="btn-modal btn-confirm-delete" onclick="confirmDelete()">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="resetModal">
+            <div class="modal-content">
+                <h3 class="modal-title">Reset All Data?</h3>
+                <p class="modal-desc">This will reset all timers and timeline history to zero for today. Your categories will remain saved.</p>
+                <div class="modal-actions">
+                    <button class="btn-modal btn-cancel" onclick="closeModal('resetModal')">Cancel</button>
+                    <button class="btn-modal btn-confirm-delete" onclick="confirmReset()">Reset</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="alertModal">
+            <div class="modal-content">
+                <h3 class="modal-title" id="alert-title">Notice</h3>
+                <p class="modal-desc" id="alert-msg">Message goes here.</p>
+                <div class="modal-actions">
+                    <button class="btn-modal btn-ok" onclick="closeModal('alertModal')">OK</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- State ---
+        let activities = [
+            { id: 1, name: "Other", color: "#6E6E6E", seconds: 0 },
+            { id: 2, name: "Work", color: "#EF5350", seconds: 0 },
+            { id: 3, name: "Projects", color: "#FFEE58", seconds: 0 },
+            { id: 4, name: "Gaming", color: "#26A69A", seconds: 0 },
+            { id: 5, name: "Exercise", color: "#42A5F5", seconds: 0 }
+        ];
+
+        let activeId = 1;
+        let pendingId = 1;
+        let totalSecondsOfDay = 0;
+        let history = [{ id: 1, duration: 0, uniqueId: Date.now() }];
+        let isPaused = false;
+
+        let settings = {
+            offlineTracking: false,
+            rollingWindow: false,
+            rollingWindowDuration: 1440 // Default to 24 Hours (1440 mins)
+        };
+
+        let editingId = null;
+        let pendingCreation = null;
+        let pendingDeleteId = null;
+
+        // drag tracking
+        let draggingId = null;
+
+        // --- Persistence ---
+        function saveData() {
+            const data = {
+                activities: activities,
+                activeId: activeId,
+                pendingId: pendingId,
+                totalSecondsOfDay: totalSecondsOfDay,
+                history: history,
+                title: document.querySelector('.app-title-input').value,
+                settings: settings,
+                isPaused: isPaused,
+                timestamp: Date.now()
+            };
+            localStorage.setItem('ChaoticTimeTracker', JSON.stringify(data));
+        }
+
+        function loadData() {
+            const raw = localStorage.getItem('ChaoticTimeTracker');
+            if (raw) {
+                try {
+                    const data = JSON.parse(raw);
+                    activities = data.activities || activities;
+                    activeId = data.activeId || 1;
+                    pendingId = data.pendingId || activeId;
+                    totalSecondsOfDay = data.totalSecondsOfDay || 0;
+                    isPaused = data.isPaused || false;
+
+                    history = (data.history || [{ id: 1, duration: 0 }]).map(h => ({
+                        ...h,
+                        uniqueId: h.uniqueId || (Date.now() + Math.random())
+                    }));
+
+                    if (data.title) document.querySelector('.app-title-input').value = data.title;
+                    if (data.settings) settings = { ...settings, ...data.settings };
+
+                    // Only calculate offline time if NOT paused
+                    if (settings.offlineTracking && data.timestamp && !isPaused) {
+                        const now = Date.now();
+                        const secondsAway = Math.floor((now - data.timestamp) / 1000);
+
+                        if (secondsAway > 0) {
+                            totalSecondsOfDay += secondsAway;
+                            const currentAct = activities.find(a => a.id === activeId);
+                            if (currentAct) currentAct.seconds += secondsAway;
+                            if (history.length > 0) history[history.length - 1].duration += secondsAway;
+                        }
+                    }
+                    processRollingWindow();
+
+                } catch (e) {
+                    console.error("Save data corrupted, resetting.", e);
+                }
+            }
+            updatePauseUI();
+        }
+
+        // --- Rolling Window Logic ---
+        function processRollingWindow() {
+            if (!settings.rollingWindow) {
+                document.getElementById('timeline').classList.remove('rolling-mode');
+                return;
+            }
+
+            const windowSeconds = settings.rollingWindowDuration * 60;
+
+            if (totalSecondsOfDay >= windowSeconds) {
+                document.getElementById('timeline').classList.add('rolling-mode');
+            } else {
+                document.getElementById('timeline').classList.remove('rolling-mode');
+            }
+
+            while (totalSecondsOfDay > windowSeconds && history.length > 0) {
+                const oldestSegment = history[0];
+                const secondsToRemove = totalSecondsOfDay - windowSeconds;
+
+                if (oldestSegment.duration <= secondsToRemove) {
+                    const removedTime = oldestSegment.duration;
+                    const act = activities.find(a => a.id === oldestSegment.id);
+                    if (act) act.seconds = Math.max(0, act.seconds - removedTime);
+                    totalSecondsOfDay -= removedTime;
+                    history.shift();
+                } else {
+                    const trimAmount = secondsToRemove;
+                    oldestSegment.duration -= trimAmount;
+                    const act = activities.find(a => a.id === oldestSegment.id);
+                    if (act) act.seconds = Math.max(0, act.seconds - trimAmount);
+                    totalSecondsOfDay -= trimAmount;
+                    break;
+                }
+            }
+        }
+
+        // --- Core Helpers ---
+        function formatTime(totalSeconds) {
+            const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
+            const s = (totalSeconds % 60).toString().padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function openAlert(title, msg) {
+            document.getElementById('alert-title').innerText = title;
+            document.getElementById('alert-msg').innerText = msg;
+            document.getElementById('alertModal').style.display = 'flex';
+        }
+
+        // --- Color Logic ---
+        function hexToHue(hex) {
+            let r = 0, g = 0, b = 0;
+            if (hex.length === 4) {
+                r = parseInt("0x" + hex[1] + hex[1]);
+                g = parseInt("0x" + hex[2] + hex[2]);
+                b = parseInt("0x" + hex[3] + hex[3]);
+            } else if (hex.length === 7) {
+                r = parseInt("0x" + hex[1] + hex[2]);
+                g = parseInt("0x" + hex[3] + hex[4]);
+                b = parseInt("0x" + hex[5] + hex[6]);
+            }
+            r /= 255; g /= 255; b /= 255;
+            let cmin = Math.min(r,g,b), cmax = Math.max(r,g,b), delta = cmax - cmin;
+            let h = 0;
+            if (delta === 0) h = 0;
+            else if (cmax === r) h = ((g - b) / delta) % 6;
+            else if (cmax === g) h = (b - r) / delta + 2;
+            else h = (r - g) / delta + 4;
+            h = Math.round(h * 60);
+            if (h < 0) h += 360;
+            return h;
+        }
+
+        function hslToHex(h, s, l) {
+            l /= 100;
+            const a = s * Math.min(l, 1 - l) / 100;
+            const f = n => {
+                const k = (n + h / 30) % 12;
+                const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+                return Math.round(255 * color).toString(16).padStart(2, '0');
+            };
+            return `#${f(0)}${f(8)}${f(4)}`;
+        }
+
+        function generateDistinctHex(existingActivities) {
+            const usedHues = existingActivities.map(a => hexToHue(a.color));
+            let bestHue = 0;
+            let maxMinDist = -1;
+
+            for(let i=0; i<20; i++) {
+                const potentialHue = Math.floor(Math.random() * 360);
+                let minDist = 360;
+                if(usedHues.length === 0) minDist = 360;
+                for(let h of usedHues) {
+                    let diff = Math.abs(potentialHue - h);
+                    if (diff > 180) diff = 360 - diff;
+                    if (diff < minDist) minDist = diff;
+                }
+                if(minDist > maxMinDist) {
+                    maxMinDist = minDist;
+                    bestHue = potentialHue;
+                }
+            }
+            return hslToHex(bestHue, 90, 64);
+        }
+
+        function getTextColor(hexColor) {
+            hexColor = hexColor.replace('#', '');
+            const r = parseInt(hexColor.substr(0, 2), 16);
+            const g = parseInt(hexColor.substr(2, 2), 16);
+            const b = parseInt(hexColor.substr(4, 2), 16);
+            const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+            return (yiq >= 150) ? '#121212' : 'white';
+        }
+
+        // --- Rendering ---
+        function renderCards() {
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+
+            activities.forEach(act => {
+                const card = document.createElement('div');
+                card.className = `card ${act.id === pendingId ? 'active' : ''}`;
+                card.setAttribute('data-id', act.id);
+                card.style.backgroundColor = act.color;
+                card.style.color = getTextColor(act.color);
+                card.setAttribute('draggable', 'true');
+
+                // create drag hint element
+                const hint = document.createElement('div');
+                hint.className = 'drag-hint';
+                hint.innerText = '⟵'; // default; replaced on dragover
+                card.appendChild(hint);
+
+                // drag handlers
+                card.addEventListener('dragstart', (e) => {
+                    draggingId = act.id;
+                    e.dataTransfer.setData('text/plain', String(act.id));
+                    card.classList.add('dragging');
+                    try { e.dataTransfer.effectAllowed = 'move'; } catch(e) {}
+                });
+                card.addEventListener('dragend', () => {
+                    draggingId = null;
+                    card.classList.remove('dragging');
+                    document.querySelectorAll('.card').forEach(c => {
+                        c.classList.remove('drag-over');
+                        c.removeAttribute('data-insert-after');
+                    });
+                });
+
+                card.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    // show drag-over only if dragging a different card
+                    if (draggingId && draggingId !== act.id) {
+                        // compute whether to insert after or before based on mouse X
+                        const rect = card.getBoundingClientRect();
+                        const insertAfter = e.clientX > (rect.left + rect.width / 2);
+                        card.classList.add('drag-over');
+                        card.setAttribute('data-insert-after', insertAfter ? 'true' : 'false');
+                        const dh = card.querySelector('.drag-hint');
+                        if (dh) dh.innerText = insertAfter ? '⟶' : '⟵';
+                    } else {
+                        card.classList.remove('drag-over');
+                        card.removeAttribute('data-insert-after');
+                    }
+                });
+                card.addEventListener('dragleave', (e) => {
+                    card.classList.remove('drag-over');
+                    card.removeAttribute('data-insert-after');
+                });
+                card.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    card.classList.remove('drag-over');
+                    const draggedId = draggingId || (e.dataTransfer.getData ? parseInt(e.dataTransfer.getData('text/plain')) : null);
+                    if (draggedId && draggedId !== act.id) {
+                        const rect = card.getBoundingClientRect();
+                        const insertAfter = (card.getAttribute('data-insert-after') === 'true') || (e.clientX > (rect.left + rect.width / 2));
+                        reorderActivities(draggedId, act.id, false, insertAfter);
+                    }
+                    // cleanup attributes
+                    card.removeAttribute('data-insert-after');
+                });
+
+                card.onclick = () => selectActivity(act.id);
+
+                // action buttons with draggable disabled so they won't start the drag
+                card.innerHTML += `
+                    <div class="card-actions">
+                        <button class="action-btn" draggable="false" onclick="openEditModal(${act.id}, event)">⚙️</button>
+                        <button class="action-btn btn-del" draggable="false" onclick="askDeleteActivity(${act.id}, event)">✕</button>
+                    </div>
+                    <h2>${escapeHtml(act.name)}</h2>
+                    <div class="time" id="time-${act.id}">${formatTime(act.seconds)}</div>
+                    <div class="percent" id="pct-${act.id}">0%</div>
+                `;
+                grid.appendChild(card);
+            });
+
+            const addBtn = document.createElement('div');
+            addBtn.className = 'card card-add';
+            addBtn.innerHTML = `<span class="add-icon">+</span>`;
+            addBtn.onclick = addNewCategory;
+            addBtn.setAttribute('draggable', 'false');
+
+            // support dropping onto add button to append to end
+            addBtn.addEventListener('dragover', (e) => { e.preventDefault(); addBtn.classList.add('drag-over'); });
+            addBtn.addEventListener('dragleave', () => addBtn.classList.remove('drag-over'));
+            addBtn.addEventListener('drop', (e) => {
+                e.preventDefault();
+                addBtn.classList.remove('drag-over');
+                const draggedId = draggingId || (e.dataTransfer.getData ? parseInt(e.dataTransfer.getData('text/plain')) : null);
+                if (draggedId) reorderActivities(draggedId, null, true, false); // append to end
+            });
+
+            grid.appendChild(addBtn);
+
+            updateCardsData();
+        }
+
+        // sanitize inner text for safety in this example
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/[&<>"'`=\/]/g, function(s) {
+                return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;",'/':'&#x2F;','`':'&#x60;','=':'&#x3D;' })[s];
+            });
+        }
+
+        function updateCardsData() {
+            activities.forEach(act => {
+                const timeEl = document.getElementById(`time-${act.id}`);
+                const pctEl = document.getElementById(`pct-${act.id}`);
+
+                if (timeEl && pctEl) {
+                    timeEl.innerText = formatTime(act.seconds);
+                    const pct = totalSecondsOfDay > 0 ? ((act.seconds / totalSecondsOfDay) * 100).toFixed(0) : 0;
+                    pctEl.innerText = `${pct}%`;
+                }
+            });
+
+            document.getElementById('total-time-display').innerText = formatTime(totalSecondsOfDay);
+            updateActiveState();
+        }
+
+        function updateActiveState() {
+            document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+            const activeCard = document.querySelector(`.card[data-id="${pendingId}"]`);
+            if (activeCard) activeCard.classList.add('active');
+        }
+
+        // --- Reorder logic ---
+        // reorderActivities(draggedId, targetId = null, appendToEnd = false, insertAfter = false)
+        function reorderActivities(draggedId, targetId = null, appendToEnd = false, insertAfter = false) {
+            const draggedIndex = activities.findIndex(a => a.id === draggedId);
+            if (draggedIndex === -1) return;
+
+            const [item] = activities.splice(draggedIndex, 1);
+
+            if (appendToEnd || targetId === null) {
+                activities.push(item);
+            } else {
+                let targetIndex = activities.findIndex(a => a.id === targetId);
+                if (targetIndex === -1) {
+                    activities.push(item);
+                } else {
+                    // if insertAfter, put after the target
+                    if (insertAfter) targetIndex = targetIndex + 1;
+                    activities.splice(targetIndex, 0, item);
+                }
+            }
+
+            saveData();
+            renderCards();
+            updateTimeline(true);
+        }
+
+        // --- Timeline ---
+        const tooltipEl = document.getElementById('timeline-tooltip');
+        const tooltipName = document.getElementById('tooltip-name');
+        const tooltipStats = document.getElementById('tooltip-stats');
+
+        function updateTimeline(instant = false) {
+            const timeline = document.getElementById('timeline');
+
+            const historyIds = new Set(history.map(h => h.uniqueId));
+
+            // 1. Remove Old
+            Array.from(timeline.children).forEach(el => {
+                const uid = parseFloat(el.dataset.uniqueId);
+                if (!historyIds.has(uid) && !el.classList.contains('shrinking')) {
+                    if (instant) {
+                        el.remove();
+                    } else {
+                        el.classList.add('shrinking');
+                        setTimeout(() => el.remove(), 500);
+                    }
+                }
+            });
+
+            // 2. Add/Update
+            history.forEach((segment, i) => {
+                let el = document.querySelector(`.timeline-segment[data-unique-id="${segment.uniqueId}"]`);
+                const act = activities.find(a => a.id === segment.id);
+                const color = act ? act.color : '#333';
+                const name = act ? act.name : 'Deleted';
+
+                if (!el) {
+                    el = document.createElement('div');
+                    el.className = 'timeline-segment';
+                    el.dataset.uniqueId = segment.uniqueId;
+                    el.style.backgroundColor = color;
+
+                    if (instant) {
+                        el.style.transition = 'none';
+                        el.style.flexGrow = segment.duration;
+                        timeline.appendChild(el);
+                    } else {
+                        el.style.flexGrow = 0;
+                        timeline.appendChild(el);
+                        void el.offsetWidth; // Reflow
+                    }
+
+                    el.addEventListener('mousemove', (e) => showTooltip(e, segment, name));
+                    el.addEventListener('mouseleave', hideTooltip);
+                }
+
+                el.style.backgroundColor = color;
+
+                // UPDATE WIDTH (Using Flex Grow)
+                el.style.flexGrow = segment.duration;
+
+                if (instant) {
+                    requestAnimationFrame(() => { el.style.transition = ''; });
+                }
+            });
+        }
+
+        function showTooltip(e, segment, name) {
+            tooltipEl.style.opacity = 1;
+            tooltipEl.style.left = e.clientX + 'px';
+            tooltipEl.style.top = e.clientY + 'px';
+            tooltipName.innerText = name;
+            const pct = totalSecondsOfDay > 0 ? ((segment.duration / totalSecondsOfDay) * 100).toFixed(1) : 0;
+            tooltipStats.innerText = `${formatTime(segment.duration)} (${pct}%)`;
+        }
+
+        function hideTooltip() {
+            tooltipEl.style.opacity = 0;
+        }
+
+        // --- Logic ---
+        function togglePause() {
+            isPaused = !isPaused;
+            updatePauseUI();
+            saveData();
+        }
+
+        function updatePauseUI() {
+            const btn = document.getElementById('btn-pause');
+            const icon = document.getElementById('pause-icon');
+            if (isPaused) {
+                icon.innerText = '▶'; // Play icon
+                btn.classList.add('active');
+                document.body.classList.add('is-paused');
+            } else {
+                icon.innerText = '⏸'; // Pause icon
+                btn.classList.remove('active');
+                document.body.classList.remove('is-paused');
+            }
+        }
+
+        function selectActivity(id) {
+            // Selecting an activity should immediately switch tracking (fixes delete-block and UX)
+            if (isPaused) {
+                // original behavior: selecting resumes tracking
+                isPaused = false;
+                updatePauseUI();
+            }
+
+            // if already active, nothing to do
+            if (id === activeId && id === pendingId) {
+                pendingId = id;
+                updateActiveState();
+                saveData();
+                return;
+            }
+
+            // commit immediate transition: update activeId and pendingId and create a fresh history segment
+            activeId = id;
+            pendingId = id;
+
+            // only push a new history segment if last history item differs (prevents duplicates)
+            const last = history.length ? history[history.length - 1] : null;
+            if (!last || last.id !== activeId) {
+                history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+            }
+
+            updateActiveState();
+            saveData();
+        }
+
+        function tick() {
+            if (isPaused) return;
+
+            if (pendingId !== activeId) {
+                // this branch is now rare since selectActivity immediately sets activeId,
+                // but keep logic for safety/other flows
+                activeId = pendingId;
+                history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+            }
+
+            const currentActivity = activities.find(a => a.id === activeId);
+
+            if (!currentActivity && activities.length > 0) {
+                activeId = activities[0].id;
+                pendingId = activeId;
+                return;
+            } else if (!currentActivity && activities.length === 0) {
+                return;
+            }
+
+            currentActivity.seconds++;
+            totalSecondsOfDay++;
+            history[history.length - 1].duration++;
+
+            processRollingWindow();
+
+            updateCardsData();
+            updateTimeline(false);
+            saveData();
+        }
+
+        // --- Settings ---
+        function openSettings() {
+            document.getElementById('setting-offline').checked = settings.offlineTracking;
+            document.getElementById('setting-rolling').checked = settings.rollingWindow;
+
+            const mins = settings.rollingWindowDuration;
+            if (mins % 60 === 0) {
+                document.getElementById('setting-rolling-value').value = mins / 60;
+                document.getElementById('setting-rolling-unit').value = 'hr';
+            } else {
+                document.getElementById('setting-rolling-value').value = mins;
+                document.getElementById('setting-rolling-unit').value = 'min';
+            }
+
+            toggleRollingInput();
+            document.getElementById('settingsModal').style.display = 'flex';
+        }
+
+        function toggleRollingInput() {
+            const isChecked = document.getElementById('setting-rolling').checked;
+            const valInput = document.getElementById('setting-rolling-value');
+            const unitInput = document.getElementById('setting-rolling-unit');
+            valInput.disabled = !isChecked;
+            unitInput.disabled = !isChecked;
+            valInput.style.opacity = isChecked ? 1 : 0.3;
+            unitInput.style.opacity = isChecked ? 1 : 0.3;
+        }
+
+        function saveSettings() {
+            settings.offlineTracking = document.getElementById('setting-offline').checked;
+            settings.rollingWindow = document.getElementById('setting-rolling').checked;
+
+            const val = parseInt(document.getElementById('setting-rolling-value').value);
+            const unit = document.getElementById('setting-rolling-unit').value;
+
+            let totalMins = 1440; // Default 24h
+            if (val > 0) {
+                totalMins = (unit === 'hr') ? val * 60 : val;
+            }
+            settings.rollingWindowDuration = totalMins;
+
+            saveData();
+            processRollingWindow();
+            updateTimeline(true);
+            closeModal('settingsModal');
+        }
+
+        // --- Interaction ---
+        function addNewCategory() {
+            const newId = Date.now();
+            const newColor = generateDistinctHex(activities);
+
+            pendingCreation = {
+                id: newId,
+                name: "New Activity",
+                color: newColor,
+                seconds: 0
+            };
+
+            openEditModal(null, null, pendingCreation);
+        }
+
+        function askResetData() {
+            document.getElementById('resetModal').style.display = 'flex';
+        }
+
+        function confirmReset() {
+            const freshActivities = activities.map(a => ({...a, seconds: 0}));
+            const title = document.querySelector('.app-title-input').value;
+
+            activities = freshActivities;
+            if(activities.length > 0) {
+                activeId = activities[0].id;
+                pendingId = activeId;
+                // If reset while paused, stay paused but reset values
+                if(!isPaused) {
+                    activities[0].seconds = 1;
+                    totalSecondsOfDay = 1;
+                    history = [{ id: activities[0].id, duration: 1, uniqueId: Date.now() }];
+                } else {
+                    activities[0].seconds = 0;
+                    totalSecondsOfDay = 0;
+                    history = [{ id: activities[0].id, duration: 0, uniqueId: Date.now() }];
+                }
+            } else {
+                totalSecondsOfDay = 0;
+                history = [];
+            }
+
+            saveData();
+
+            renderCards();
+            document.getElementById('timeline').innerHTML = '';
+            document.getElementById('timeline').classList.remove('rolling-mode');
+            updateTimeline(true);
+            closeModal('resetModal');
+        }
+
+        function askDeleteActivity(id, event) {
+            if(event) event.stopPropagation();
+            if(activities.length <= 1) { openAlert("Action Blocked", "You need at least one activity to track time."); return; }
+
+            // Block delete only if the activity is the one currently being tracked (activeId)
+            // Because selectActivity now switches active immediately, this check is accurate.
+            if(id === activeId) { openAlert("Action Blocked", "You cannot delete the activity you are currently tracking. Switch to a different one first."); return; }
+
+            pendingDeleteId = id;
+            document.getElementById('deleteModal').style.display = 'flex';
+        }
+
+        function confirmDelete() {
+            if (pendingDeleteId) {
+                activities = activities.filter(a => a.id !== pendingDeleteId);
+                // if we deleted the active/pending id by some race (shouldn't happen), move to first available
+                if (!activities.find(a => a.id === activeId)) {
+                    activeId = activities.length ? activities[0].id : null;
+                    pendingId = activeId;
+                    if (activeId) history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+                }
+                saveData();
+                renderCards();
+            }
+            closeModal('deleteModal');
+        }
+
+        // --- Modals Global Handlers ---
+        document.addEventListener('keydown', function(event) {
+            if (document.getElementById('editModal').style.display === 'flex') {
+                if (event.key === "Escape") closeModal('editModal');
+                if (event.key === "Enter") saveEdit();
+            }
+            else if (document.getElementById('deleteModal').style.display === 'flex') {
+                if (event.key === "Escape") closeModal('deleteModal');
+                if (event.key === "Enter") confirmDelete();
+            }
+            else if (document.getElementById('resetModal').style.display === 'flex') {
+                if (event.key === "Escape") closeModal('resetModal');
+                if (event.key === "Enter") confirmReset();
+            }
+            else if (document.getElementById('settingsModal').style.display === 'flex') {
+                if (event.key === "Escape") closeModal('settingsModal');
+                if (event.key === "Enter") saveSettings();
+            }
+            else if (document.getElementById('alertModal').style.display === 'flex') {
+                if (event.key === "Escape" || event.key === "Enter") closeModal('alertModal');
+            }
+            else if (document.activeElement.classList.contains('app-title-input')) {
+                if (event.key === "Enter") document.activeElement.blur();
+            }
+            // Hotkey 'P' for pause, but don't trigger if a modal is open
+            else if (event.key.toLowerCase() === 'p' && document.querySelector('.modal-overlay[style*="flex"]') === null) {
+                togglePause();
+            }
+        });
+
+        function handleInputKey(event) { }
+
+        function openEditModal(id, event, newItem = null) {
+            if(event) event.stopPropagation();
+            const modalTitle = document.getElementById('modal-title-text');
+            const saveBtn = document.getElementById('modal-save-btn');
+            const nameInput = document.getElementById('edit-name');
+            const colorInput = document.getElementById('edit-color');
+
+            if (newItem) {
+                editingId = null;
+                pendingCreation = newItem;
+                modalTitle.innerText = "Add New Activity";
+                saveBtn.innerText = "Add";
+                nameInput.value = newItem.name;
+                colorInput.value = newItem.color;
+            } else {
+                const act = activities.find(a => a.id === id);
+                if(!act) return;
+                editingId = id;
+                pendingCreation = null;
+                modalTitle.innerText = "Edit Activity";
+                saveBtn.innerText = "Save";
+                nameInput.value = act.name;
+                colorInput.value = act.color;
+            }
+            document.getElementById('editModal').style.display = 'flex';
+            nameInput.select();
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+            if (modalId === 'editModal') { editingId = null; pendingCreation = null; }
+            if (modalId === 'deleteModal') { pendingDeleteId = null; }
+        }
+
+        function saveEdit() {
+            const newName = document.getElementById('edit-name').value;
+            const newColor = document.getElementById('edit-color').value;
+            if (pendingCreation) {
+                pendingCreation.name = newName;
+                pendingCreation.color = newColor;
+                activities.push(pendingCreation);
+                renderCards();
+            } else if (editingId) {
+                const act = activities.find(a => a.id === editingId);
+                if(act) {
+                    if(newName) act.name = newName;
+                    if(newColor) act.color = newColor;
+                }
+                renderCards();
+                updateTimeline(false);
+            }
+            saveData();
+            closeModal('editModal');
+        }
+
+        // --- Init ---
+        loadData();
+        renderCards();
+        updateTimeline(true); // Instant load
+        setInterval(tick, 1000);
+    </script>
+</body>
+</html>
