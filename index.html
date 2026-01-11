@@ -253,6 +253,30 @@
             box-shadow: 0 10px 0 var(--shadow-color);
         }
 
+        /* SHAKE ANIMATION for Rapid Add */
+        /* Use 'translate' property to avoid conflict with hover 'transform' */
+        @keyframes shake {
+            0% { translate: 1px 1px; }
+            10% { translate: -1px -2px; }
+            20% { translate: -3px 0px; }
+            30% { translate: 3px 2px; }
+            40% { translate: 1px -1px; }
+            50% { translate: -1px 2px; }
+            60% { translate: -3px 1px; }
+            70% { translate: 3px 1px; }
+            80% { translate: -1px -1px; }
+            90% { translate: 1px 2px; }
+            100% { translate: 1px -2px; }
+        }
+
+        .card.shaking {
+            animation: shake 0.5s;
+            animation-iteration-count: infinite;
+            border-color: var(--pause-color) !important;
+            box-shadow: 0 0 15px var(--pause-color);
+            z-index: 50;
+        }
+
         /* Dim cards when paused to indicate inactivity */
         body.is-paused .card:not(:hover) {
             opacity: 0.7;
@@ -548,6 +572,13 @@
         // Timer anchor for accurate delta tracking
         let lastTickTime = Date.now();
 
+        // Rapid Add State
+        let holdTimer = null;
+        let rapidAddTimeout = null; // Changed to Timeout for recursive acceleration
+        let isRapidAdding = false;
+        let ignoreNextClick = false;
+        let rapidAddDelay = 200; // Starting delay in ms
+
         let settings = {
             offlineTracking: false,
             rollingWindow: false,
@@ -758,8 +789,19 @@
                 hint.innerText = '⟵'; // default; replaced on dragover
                 card.appendChild(hint);
 
+                // Mouse Event Handlers for Rapid Add
+                card.onmousedown = (e) => handleCardMouseDown(e, act.id);
+                card.onmouseup = (e) => handleCardMouseUp(e, act.id);
+                card.onmouseleave = (e) => handleCardMouseLeave(e, act.id);
+                // Standard click replaced by custom logic in onmouseup or separated
+                card.onclick = (e) => handleCardClick(e, act.id);
+
                 // drag handlers
                 card.addEventListener('dragstart', (e) => {
+                    // STOP rapid add immediately if drag starts
+                    clearTimeout(holdTimer);
+                    if (isRapidAdding) stopRapidAdd(act.id);
+                    
                     draggingId = act.id;
                     e.dataTransfer.setData('text/plain', String(act.id));
                     card.classList.add('dragging');
@@ -807,13 +849,11 @@
                     card.removeAttribute('data-insert-after');
                 });
 
-                card.onclick = () => selectActivity(act.id);
-
-                // action buttons with draggable disabled so they won't start the drag
+                // action buttons with draggable disabled
                 card.innerHTML += `
                     <div class="card-actions">
-                        <button class="action-btn" draggable="false" onclick="openEditModal(${act.id}, event)">⚙️</button>
-                        <button class="action-btn btn-del" draggable="false" onclick="askDeleteActivity(${act.id}, event)">✕</button>
+                        <button class="action-btn" draggable="false" onmousedown="event.stopPropagation()" onclick="openEditModal(${act.id}, event)">⚙️</button>
+                        <button class="action-btn btn-del" draggable="false" onmousedown="event.stopPropagation()" onclick="askDeleteActivity(${act.id}, event)">✕</button>
                     </div>
                     <h2>${escapeHtml(act.name)}</h2>
                     <div class="time" id="time-${act.id}">${formatTime(act.seconds)}</div>
@@ -841,6 +881,99 @@
             grid.appendChild(addBtn);
 
             updateCardsData();
+        }
+
+        // --- Rapid Add Logic ---
+        function handleCardMouseDown(e, id) {
+            if (e.button !== 0) return; // Only Left Click
+            isRapidAdding = false;
+            ignoreNextClick = false;
+
+            // Wait 2 seconds before starting rapid add
+            holdTimer = setTimeout(() => {
+                isRapidAdding = true;
+                ignoreNextClick = true; // Prevents switching task when releasing
+                rapidAddDelay = 200; // Reset speed
+                startRapidAdd(id);
+            }, 2000); 
+        }
+
+        function handleCardMouseUp(e, id) {
+            clearTimeout(holdTimer);
+            stopRapidAdd(id);
+        }
+
+        function handleCardMouseLeave(e, id) {
+            clearTimeout(holdTimer);
+            if (isRapidAdding) {
+                stopRapidAdd(id);
+            }
+        }
+
+        function handleCardClick(e, id) {
+            if (ignoreNextClick) {
+                ignoreNextClick = false;
+                return;
+            }
+            selectActivity(id);
+        }
+
+        function startRapidAdd(id) {
+            const card = document.querySelector(`.card[data-id="${id}"]`);
+            if (card) card.classList.add('shaking');
+
+            // Stop the main timer anchor from drifting while we hijack the process
+            // We'll reset it when we stop
+            
+            // Recursive function for acceleration
+            function rapidStep() {
+                if (!isRapidAdding) return;
+
+                const act = activities.find(a => a.id === id);
+                if (act) {
+                    act.seconds++;
+                    totalSecondsOfDay++;
+                    
+                    // TIMELINE UPDATE LOGIC:
+                    // Force alignment: Ensure history is adding to the specific ID we are holding.
+                    let last = history.length > 0 ? history[history.length - 1] : null;
+                    
+                    // If the last block is NOT the one we are holding, create a new block
+                    // even if we just created one (though rapidStep logic prevents duplicates implicitly)
+                    if (!last || last.id !== id) {
+                        last = { id: id, duration: 0, uniqueId: Date.now() + Math.random() };
+                        history.push(last);
+                        updateTimeline(false); // Add the DOM element immediately
+                    }
+                    
+                    last.duration++;
+
+                    updateCardsData();
+                }
+
+                // Accelerate: Decrease delay by 10% until 30ms floor
+                rapidAddDelay = Math.max(30, rapidAddDelay * 0.9);
+                rapidAddTimeout = setTimeout(rapidStep, rapidAddDelay);
+            }
+
+            rapidStep();
+        }
+
+        function stopRapidAdd(id) {
+            if (rapidAddTimeout) {
+                clearTimeout(rapidAddTimeout);
+                rapidAddTimeout = null;
+            }
+            const card = document.querySelector(`.card[data-id="${id}"]`);
+            if (card) card.classList.remove('shaking');
+            
+            if (isRapidAdding) {
+                // Reset main timer anchor to NOW so we don't jump time when normal tick resumes
+                lastTickTime = Date.now();
+                saveData();
+                updateTimeline(false); 
+            }
+            isRapidAdding = false;
         }
 
         // sanitize inner text for safety in this example
@@ -1049,7 +1182,8 @@
         }
 
         function tick() {
-            if (isPaused) {
+            // STOP if paused OR if Rapid Add is active (can't track two things at once)
+            if (isPaused || isRapidAdding) {
                 // Prevent jump when resuming by keeping anchor fresh
                 lastTickTime = Date.now();
                 return;
@@ -1063,14 +1197,10 @@
                 let secondsPassed = Math.floor(delta / 1000);
 
                 // --- SLEEP / SUSPENSION HANDLING ---
-                // If time jump is large (> 5s), computer likely slept or tab was backgrounded for a long time.
-                // If Offline Tracking is DISABLED, we ignore the gap.
                 if (!settings.offlineTracking && secondsPassed > 5) {
                     secondsPassed = 1; 
-                    // Reset anchor to now (ignoring the gap)
                     lastTickTime = now;
                 } else {
-                    // Otherwise consume the time and keep the millisecond remainder for accuracy
                     lastTickTime = now - (delta % 1000);
                 }
 
@@ -1087,6 +1217,18 @@
                     return;
                 } else if (!currentActivity && activities.length === 0) {
                     return;
+                }
+
+                // CATCH UP BUG FIX:
+                // Check if the last history segment actually matches what we are about to add to.
+                // If we just finished a "Rapid Add" session on a different task, the last history
+                // segment will have THAT task's ID. We need to create a new one for the active task.
+                if (history.length > 0) {
+                    const last = history[history.length - 1];
+                    if (last.id !== activeId) {
+                        history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+                        updateTimeline(false); // Immediate visual update
+                    }
                 }
 
                 // Apply the calculated seconds
