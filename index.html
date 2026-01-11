@@ -197,7 +197,8 @@
             border: 1px solid rgba(255,255,255,0.1);
         }
         #tooltip-name { font-weight: bold; display: block; margin-bottom: 2px; color: #ccc;}
-        #tooltip-stats { font-family: monospace; color: #fff;}
+        #tooltip-stats { font-family: monospace; color: #fff; display: block;}
+        #tooltip-clock { font-size: 0.75rem; color: #aaa; display: block; margin-top: 2px; border-top: 1px solid #444; padding-top: 2px;}
 
         /* --- Grid --- */
         .grid {
@@ -445,6 +446,7 @@
     <div id="timeline-tooltip">
         <span id="tooltip-name">Activity</span>
         <span id="tooltip-stats">00:00:00 (0%)</span>
+        <span id="tooltip-clock">00:00 - 00:00</span>
     </div>
 
     <div class="app-container">
@@ -565,7 +567,13 @@
         let activeId = 1;
         let pendingId = 1;
         let totalSecondsOfDay = 0;
-        let history = [{ id: 1, duration: 0, uniqueId: Date.now() }];
+        let history = [{ 
+            id: 1, 
+            duration: 0, 
+            uniqueId: Date.now(),
+            startTime: Date.now(),
+            endTime: Date.now()
+        }];
         let isPaused = false;
         let isGrayscale = false;
         
@@ -574,15 +582,15 @@
 
         // Rapid Add State
         let holdTimer = null;
-        let rapidAddTimeout = null; // Changed to Timeout for recursive acceleration
+        let rapidAddTimeout = null; 
         let isRapidAdding = false;
         let ignoreNextClick = false;
-        let rapidAddDelay = 200; // Starting delay in ms
+        let rapidAddDelay = 200; 
 
         let settings = {
             offlineTracking: false,
             rollingWindow: false,
-            rollingWindowDuration: 1440 // Default to 24 Hours (1440 mins)
+            rollingWindowDuration: 1440 
         };
 
         let editingId = null;
@@ -621,9 +629,12 @@
                     isPaused = data.isPaused || false;
                     isGrayscale = data.isGrayscale || false;
 
+                    // Support legacy data (add missing start/end times)
                     history = (data.history || [{ id: 1, duration: 0 }]).map(h => ({
                         ...h,
-                        uniqueId: h.uniqueId || (Date.now() + Math.random())
+                        uniqueId: h.uniqueId || (Date.now() + Math.random()),
+                        startTime: h.startTime || Date.now(),
+                        endTime: h.endTime || Date.now()
                     }));
 
                     if (data.title) document.querySelector('.app-title-input').value = data.title;
@@ -638,7 +649,11 @@
                             totalSecondsOfDay += secondsAway;
                             const currentAct = activities.find(a => a.id === activeId);
                             if (currentAct) currentAct.seconds += secondsAway;
-                            if (history.length > 0) history[history.length - 1].duration += secondsAway;
+                            if (history.length > 0) {
+                                const last = history[history.length - 1];
+                                last.duration += secondsAway;
+                                last.endTime = now;
+                            }
                         }
                     }
                     processRollingWindow();
@@ -685,6 +700,9 @@
                     const act = activities.find(a => a.id === oldestSegment.id);
                     if (act) act.seconds = Math.max(0, act.seconds - trimAmount);
                     totalSecondsOfDay -= trimAmount;
+                    // Adjust Start Time of truncated segment so clock makes sense
+                    // (Adding seconds to start time effectively shortens the window from the left)
+                    oldestSegment.startTime += (trimAmount * 1000); 
                     break;
                 }
             }
@@ -696,6 +714,14 @@
             const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
             const s = (totalSeconds % 60).toString().padStart(2, '0');
             return `${h}:${m}:${s}`;
+        }
+
+        function formatClock(timestamp) {
+            if(!timestamp) return "--:--";
+            const d = new Date(timestamp);
+            return d.getHours().toString().padStart(2,'0') + ":" + 
+                   d.getMinutes().toString().padStart(2,'0') + ":" + 
+                   d.getSeconds().toString().padStart(2,'0');
         }
 
         function openAlert(title, msg) {
@@ -922,10 +948,20 @@
             const card = document.querySelector(`.card[data-id="${id}"]`);
             if (card) card.classList.add('shaking');
 
-            // Stop the main timer anchor from drifting while we hijack the process
-            // We'll reset it when we stop
-            
-            // Recursive function for acceleration
+            // force a new segment to visually separate rapid add
+            // Mark it with a flag (optional, but good for debugging) 
+            // and ensure START time is NOW (wall clock)
+            const newSegment = { 
+                id: id, 
+                duration: 0, 
+                uniqueId: Date.now() + Math.random(),
+                startTime: Date.now(),
+                endTime: Date.now(),
+                isRapid: true
+            };
+            history.push(newSegment);
+            updateTimeline(false);
+
             function rapidStep() {
                 if (!isRapidAdding) return;
 
@@ -934,19 +970,10 @@
                     act.seconds++;
                     totalSecondsOfDay++;
                     
-                    // TIMELINE UPDATE LOGIC:
-                    // Force alignment: Ensure history is adding to the specific ID we are holding.
-                    let last = history.length > 0 ? history[history.length - 1] : null;
-                    
-                    // If the last block is NOT the one we are holding, create a new block
-                    // even if we just created one (though rapidStep logic prevents duplicates implicitly)
-                    if (!last || last.id !== id) {
-                        last = { id: id, duration: 0, uniqueId: Date.now() + Math.random() };
-                        history.push(last);
-                        updateTimeline(false); // Add the DOM element immediately
-                    }
-                    
+                    // Update the rapid segment we just created
+                    const last = history[history.length - 1];
                     last.duration++;
+                    last.endTime = Date.now(); // Update end time to current wall clock
 
                     updateCardsData();
                 }
@@ -1036,6 +1063,7 @@
         const tooltipEl = document.getElementById('timeline-tooltip');
         const tooltipName = document.getElementById('tooltip-name');
         const tooltipStats = document.getElementById('tooltip-stats');
+        const tooltipClock = document.getElementById('tooltip-clock');
 
         function updateTimeline(instant = false) {
             const timeline = document.getElementById('timeline');
@@ -1098,8 +1126,14 @@
             tooltipEl.style.left = e.clientX + 'px';
             tooltipEl.style.top = e.clientY + 'px';
             tooltipName.innerText = name;
+            
             const pct = totalSecondsOfDay > 0 ? ((segment.duration / totalSecondsOfDay) * 100).toFixed(1) : 0;
             tooltipStats.innerText = `${formatTime(segment.duration)} (${pct}%)`;
+            
+            // Format timestamps for clock tooltip
+            const startStr = formatClock(segment.startTime);
+            const endStr = formatClock(segment.endTime);
+            tooltipClock.innerText = `${startStr} - ${endStr}`;
         }
 
         function hideTooltip() {
@@ -1173,8 +1207,15 @@
 
             // only push a new history segment if last history item differs (prevents duplicates)
             const last = history.length ? history[history.length - 1] : null;
+            // Always create a new segment on switch to capture Start Time accurately
             if (!last || last.id !== activeId) {
-                history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+                history.push({ 
+                    id: activeId, 
+                    duration: 0, 
+                    uniqueId: Date.now() + Math.random(),
+                    startTime: Date.now(),
+                    endTime: Date.now()
+                });
             }
 
             updateActiveState();
@@ -1206,7 +1247,13 @@
 
                 if (pendingId !== activeId) {
                     activeId = pendingId;
-                    history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+                    history.push({ 
+                        id: activeId, 
+                        duration: 0, 
+                        uniqueId: Date.now() + Math.random(),
+                        startTime: Date.now(),
+                        endTime: Date.now() 
+                    });
                 }
 
                 const currentActivity = activities.find(a => a.id === activeId);
@@ -1220,13 +1267,17 @@
                 }
 
                 // CATCH UP BUG FIX:
-                // Check if the last history segment actually matches what we are about to add to.
-                // If we just finished a "Rapid Add" session on a different task, the last history
-                // segment will have THAT task's ID. We need to create a new one for the active task.
+                // If previous block was a Rapid Add (or just different ID), start new block for current ID
                 if (history.length > 0) {
                     const last = history[history.length - 1];
-                    if (last.id !== activeId) {
-                        history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+                    if (last.id !== activeId || last.isRapid) {
+                        history.push({ 
+                            id: activeId, 
+                            duration: 0, 
+                            uniqueId: Date.now() + Math.random(),
+                            startTime: Date.now(),
+                            endTime: Date.now()
+                        });
                         updateTimeline(false); // Immediate visual update
                     }
                 }
@@ -1234,8 +1285,11 @@
                 // Apply the calculated seconds
                 currentActivity.seconds += secondsPassed;
                 totalSecondsOfDay += secondsPassed;
+                
                 if (history.length > 0) {
-                    history[history.length - 1].duration += secondsPassed;
+                    const last = history[history.length - 1];
+                    last.duration += secondsPassed;
+                    last.endTime = Date.now();
                 }
 
                 processRollingWindow();
@@ -1323,11 +1377,23 @@
                 if(!isPaused) {
                     activities[0].seconds = 1;
                     totalSecondsOfDay = 1;
-                    history = [{ id: activities[0].id, duration: 1, uniqueId: Date.now() }];
+                    history = [{ 
+                        id: activities[0].id, 
+                        duration: 1, 
+                        uniqueId: Date.now(), 
+                        startTime: Date.now(), 
+                        endTime: Date.now() 
+                    }];
                 } else {
                     activities[0].seconds = 0;
                     totalSecondsOfDay = 0;
-                    history = [{ id: activities[0].id, duration: 0, uniqueId: Date.now() }];
+                    history = [{ 
+                        id: activities[0].id, 
+                        duration: 0, 
+                        uniqueId: Date.now(),
+                        startTime: Date.now(),
+                        endTime: Date.now()
+                    }];
                 }
             } else {
                 totalSecondsOfDay = 0;
@@ -1365,7 +1431,13 @@
                 if (!activities.find(a => a.id === activeId)) {
                     activeId = activities.length ? activities[0].id : null;
                     pendingId = activeId;
-                    if (activeId) history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+                    if (activeId) history.push({ 
+                        id: activeId, 
+                        duration: 0, 
+                        uniqueId: Date.now() + Math.random(),
+                        startTime: Date.now(),
+                        endTime: Date.now()
+                    });
                 }
                 saveData();
                 renderCards();
