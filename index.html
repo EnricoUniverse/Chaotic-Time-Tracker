@@ -28,7 +28,12 @@
             height: 100vh;
             margin: 0;
             overflow: hidden;
-            transition: background-color 0.3s;
+            transition: background-color 0.3s, filter 0.3s ease;
+        }
+
+        /* --- Grayscale Mode --- */
+        body.grayscale-mode {
+            filter: grayscale(100%);
         }
 
         /* --- Main Layout --- */
@@ -98,15 +103,13 @@
 
         .header-actions { display: flex; gap: 10px; align-items: center; }
 
-        /* Keep header buttons visually consistent and restore previous look.
-           All header buttons now share the same height; pause button keeps
-           a fixed width so the glyph swap doesn't shift layout. */
+        /* Keep header buttons visually consistent */
         .btn-header {
             background: transparent;
             border: 1px solid #444;
             color: #666;
             padding: 0 10px;
-            height: 36px;                /* consistent height */
+            height: 36px;
             line-height: 36px;
             border-radius: 6px;
             cursor: pointer;
@@ -122,10 +125,17 @@
         .btn-reset { font-size: 0.7rem; text-transform: uppercase; padding: 0 8px; }
         .btn-reset:hover { border-color: #EF5350; color: #EF5350; background: rgba(239, 83, 80, 0.1); }
 
-        /* Pause button: fixed square area so glyph width change doesn't move others */
+        /* Active state for toggle buttons (like B&W) */
+        .btn-header.toggled-on {
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            border-color: #888;
+        }
+
+        /* Pause button: fixed square area */
         .btn-pause {
-            width: 40px;                /* fixed width */
-            height: 36px;               /* matches header button height */
+            width: 40px;
+            height: 36px;
             padding: 0;
             font-size: 18px;
             display: inline-flex;
@@ -136,7 +146,7 @@
         .btn-pause .icon {
             display: inline-block;
             line-height: 1;
-            width: 18px; /* consistent glyph container */
+            width: 18px;
             text-align: center;
         }
         .btn-pause:hover { border-color: var(--pause-color); color: var(--pause-color); background: rgba(255, 193, 7, 0.06); }
@@ -423,10 +433,13 @@
                     <span class="total-value" id="total-time-display">00:00:00</span>
                 </div>
 
-                <!-- Pause Button (only button with modified sizing) -->
+                <!-- Pause Button -->
                 <button class="btn-header btn-pause" id="btn-pause" onclick="togglePause()" title="Pause/Resume Tracking" aria-label="Pause or resume tracking">
                     <span class="icon" id="pause-icon">⏸</span>
                 </button>
+
+                <!-- Black and White Filter Button -->
+                <button class="btn-header" id="btn-bw" onclick="toggleGrayscale()" title="Toggle Black & White Mode">◐</button>
 
                 <button class="btn-header" onclick="openSettings()" title="Settings">⚙️</button>
                 <button class="btn-header btn-reset" onclick="askResetData()" title="Reset Tracking">Reset</button>
@@ -530,6 +543,7 @@
         let totalSecondsOfDay = 0;
         let history = [{ id: 1, duration: 0, uniqueId: Date.now() }];
         let isPaused = false;
+        let isGrayscale = false;
 
         let settings = {
             offlineTracking: false,
@@ -555,6 +569,7 @@
                 title: document.querySelector('.app-title-input').value,
                 settings: settings,
                 isPaused: isPaused,
+                isGrayscale: isGrayscale,
                 timestamp: Date.now()
             };
             localStorage.setItem('ChaoticTimeTracker', JSON.stringify(data));
@@ -570,6 +585,7 @@
                     pendingId = data.pendingId || activeId;
                     totalSecondsOfDay = data.totalSecondsOfDay || 0;
                     isPaused = data.isPaused || false;
+                    isGrayscale = data.isGrayscale || false;
 
                     history = (data.history || [{ id: 1, duration: 0 }]).map(h => ({
                         ...h,
@@ -598,6 +614,7 @@
                 }
             }
             updatePauseUI();
+            applyGrayscale();
         }
 
         // --- Rolling Window Logic ---
@@ -968,6 +985,24 @@
                 icon.innerText = '⏸'; // Pause icon
                 btn.classList.remove('active');
                 document.body.classList.remove('is-paused');
+            }
+        }
+
+        // --- B&W Toggle ---
+        function toggleGrayscale() {
+            isGrayscale = !isGrayscale;
+            applyGrayscale();
+            saveData();
+        }
+
+        function applyGrayscale() {
+            const btn = document.getElementById('btn-bw');
+            if (isGrayscale) {
+                document.body.classList.add('grayscale-mode');
+                btn.classList.add('toggled-on');
+            } else {
+                document.body.classList.remove('grayscale-mode');
+                btn.classList.remove('toggled-on');
             }
         }
 
