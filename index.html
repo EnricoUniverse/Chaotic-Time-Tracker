@@ -544,6 +544,9 @@
         let history = [{ id: 1, duration: 0, uniqueId: Date.now() }];
         let isPaused = false;
         let isGrayscale = false;
+        
+        // Timer anchor for accurate delta tracking
+        let lastTickTime = Date.now();
 
         let settings = {
             offlineTracking: false,
@@ -595,7 +598,7 @@
                     if (data.title) document.querySelector('.app-title-input').value = data.title;
                     if (data.settings) settings = { ...settings, ...data.settings };
 
-                    // Only calculate offline time if NOT paused
+                    // Initial Offline Time Calculation (when page was closed)
                     if (settings.offlineTracking && data.timestamp && !isPaused) {
                         const now = Date.now();
                         const secondsAway = Math.floor((now - data.timestamp) / 1000);
@@ -615,6 +618,9 @@
             }
             updatePauseUI();
             applyGrayscale();
+            
+            // Reset the timer anchor on load so we don't jump
+            lastTickTime = Date.now();
         }
 
         // --- Rolling Window Logic ---
@@ -970,6 +976,10 @@
         // --- Logic ---
         function togglePause() {
             isPaused = !isPaused;
+            if (!isPaused) {
+                // If resuming, reset the anchor so we don't jump time
+                lastTickTime = Date.now();
+            }
             updatePauseUI();
             saveData();
         }
@@ -1007,11 +1017,13 @@
         }
 
         function selectActivity(id) {
-            // Selecting an activity should immediately switch tracking (fixes delete-block and UX)
+            // Selecting an activity should immediately switch tracking
             if (isPaused) {
                 // original behavior: selecting resumes tracking
                 isPaused = false;
                 updatePauseUI();
+                // Reset anchor on resume
+                lastTickTime = Date.now();
             }
 
             // if already active, nothing to do
@@ -1037,34 +1049,58 @@
         }
 
         function tick() {
-            if (isPaused) return;
-
-            if (pendingId !== activeId) {
-                // this branch is now rare since selectActivity immediately sets activeId,
-                // but keep logic for safety/other flows
-                activeId = pendingId;
-                history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
-            }
-
-            const currentActivity = activities.find(a => a.id === activeId);
-
-            if (!currentActivity && activities.length > 0) {
-                activeId = activities[0].id;
-                pendingId = activeId;
-                return;
-            } else if (!currentActivity && activities.length === 0) {
+            if (isPaused) {
+                // Prevent jump when resuming by keeping anchor fresh
+                lastTickTime = Date.now();
                 return;
             }
 
-            currentActivity.seconds++;
-            totalSecondsOfDay++;
-            history[history.length - 1].duration++;
+            const now = Date.now();
+            const delta = now - lastTickTime;
 
-            processRollingWindow();
+            // Only update if at least 1 second has passed
+            if (delta >= 1000) {
+                let secondsPassed = Math.floor(delta / 1000);
 
-            updateCardsData();
-            updateTimeline(false);
-            saveData();
+                // --- SLEEP / SUSPENSION HANDLING ---
+                // If time jump is large (> 5s), computer likely slept or tab was backgrounded for a long time.
+                // If Offline Tracking is DISABLED, we ignore the gap.
+                if (!settings.offlineTracking && secondsPassed > 5) {
+                    secondsPassed = 1; 
+                    // Reset anchor to now (ignoring the gap)
+                    lastTickTime = now;
+                } else {
+                    // Otherwise consume the time and keep the millisecond remainder for accuracy
+                    lastTickTime = now - (delta % 1000);
+                }
+
+                if (pendingId !== activeId) {
+                    activeId = pendingId;
+                    history.push({ id: activeId, duration: 0, uniqueId: Date.now() + Math.random() });
+                }
+
+                const currentActivity = activities.find(a => a.id === activeId);
+
+                if (!currentActivity && activities.length > 0) {
+                    activeId = activities[0].id;
+                    pendingId = activeId;
+                    return;
+                } else if (!currentActivity && activities.length === 0) {
+                    return;
+                }
+
+                // Apply the calculated seconds
+                currentActivity.seconds += secondsPassed;
+                totalSecondsOfDay += secondsPassed;
+                if (history.length > 0) {
+                    history[history.length - 1].duration += secondsPassed;
+                }
+
+                processRollingWindow();
+                updateCardsData();
+                updateTimeline(false);
+                saveData();
+            }
         }
 
         // --- Settings ---
@@ -1155,6 +1191,9 @@
                 totalSecondsOfDay = 0;
                 history = [];
             }
+            
+            // Reset anchor
+            lastTickTime = Date.now();
 
             saveData();
 
