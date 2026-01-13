@@ -168,15 +168,18 @@
 
         .timeline-segment {
             height: 100%;
-            transition: flex-grow 0.5s linear;
+            /* NO TRANSITION: We update raw data frequently for smoothness */
+            transition: none; 
             position: relative;
             min-width: 0;
             flex-basis: 0;
+            cursor: pointer;
         }
 
-        .timeline-segment.shrinking {
-            flex-grow: 0.0001 !important;
-            border: none;
+        .timeline-segment:hover {
+            filter: brightness(1.3);
+            z-index: 2;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
         }
 
         /* Timeline Tooltip */
@@ -199,6 +202,7 @@
         #tooltip-name { font-weight: bold; display: block; margin-bottom: 2px; color: #ccc;}
         #tooltip-stats { font-family: monospace; color: #fff; display: block;}
         #tooltip-clock { font-size: 0.75rem; color: #aaa; display: block; margin-top: 2px; border-top: 1px solid #444; padding-top: 2px;}
+        #tooltip-hint { font-size: 0.7rem; color: #4CAF50; margin-top: 4px; font-style: italic; display: block; }
 
         /* --- Grid --- */
         .grid {
@@ -255,7 +259,6 @@
         }
 
         /* SHAKE ANIMATION for Rapid Add */
-        /* Use 'translate' property to avoid conflict with hover 'transform' */
         @keyframes shake {
             0% { translate: 1px 1px; }
             10% { translate: -1px -2px; }
@@ -495,6 +498,27 @@
             </div>
         </div>
 
+        <!-- NEW: Segment Edit Modal -->
+        <div class="modal-overlay" id="segmentModal">
+            <div class="modal-content">
+                <h3 class="modal-title">Edit Timeline Segment</h3>
+                <div style="font-size: 0.8rem; color: #888; margin-bottom: 10px;" id="segment-info-text">
+                    00:00 - 00:05 (5m 00s)
+                </div>
+
+                <label>Change Category</label>
+                <select id="segment-activity-select"></select>
+
+                <div class="modal-actions" style="justify-content: space-between; margin-top: 20px;">
+                    <button class="btn-modal btn-confirm-delete" onclick="deleteSegment()">Delete Segment</button>
+                    <div style="display:flex; gap:10px;">
+                        <button class="btn-modal btn-cancel" onclick="closeModal('segmentModal')">Cancel</button>
+                        <button class="btn-modal btn-save" onclick="saveSegmentEdit()">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="modal-overlay" id="settingsModal">
             <div class="modal-content">
                 <h3 class="modal-title">Settings</h3>
@@ -585,7 +609,7 @@
         let rapidAddTimeout = null; 
         let isRapidAdding = false;
         let ignoreNextClick = false;
-        let rapidAddDelay = 200; 
+        let rapidAddDelay = 100; // Start fast
 
         let settings = {
             offlineTracking: false,
@@ -643,7 +667,7 @@
                     // Initial Offline Time Calculation (when page was closed)
                     if (settings.offlineTracking && data.timestamp && !isPaused) {
                         const now = Date.now();
-                        const secondsAway = Math.floor((now - data.timestamp) / 1000);
+                        const secondsAway = (now - data.timestamp) / 1000; // Use float
 
                         if (secondsAway > 0) {
                             totalSecondsOfDay += secondsAway;
@@ -672,17 +696,10 @@
         // --- Rolling Window Logic ---
         function processRollingWindow() {
             if (!settings.rollingWindow) {
-                document.getElementById('timeline').classList.remove('rolling-mode');
                 return;
             }
 
             const windowSeconds = settings.rollingWindowDuration * 60;
-
-            if (totalSecondsOfDay >= windowSeconds) {
-                document.getElementById('timeline').classList.add('rolling-mode');
-            } else {
-                document.getElementById('timeline').classList.remove('rolling-mode');
-            }
 
             while (totalSecondsOfDay > windowSeconds && history.length > 0) {
                 const oldestSegment = history[0];
@@ -701,7 +718,6 @@
                     if (act) act.seconds = Math.max(0, act.seconds - trimAmount);
                     totalSecondsOfDay -= trimAmount;
                     // Adjust Start Time of truncated segment so clock makes sense
-                    // (Adding seconds to start time effectively shortens the window from the left)
                     oldestSegment.startTime += (trimAmount * 1000); 
                     break;
                 }
@@ -710,9 +726,11 @@
 
         // --- Core Helpers ---
         function formatTime(totalSeconds) {
-            const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
-            const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
-            const s = (totalSeconds % 60).toString().padStart(2, '0');
+            // Use floor because we might have float seconds
+            const sec = Math.floor(totalSeconds);
+            const h = Math.floor(sec / 3600).toString().padStart(2, '0');
+            const m = Math.floor((sec % 3600) / 60).toString().padStart(2, '0');
+            const s = (sec % 60).toString().padStart(2, '0');
             return `${h}:${m}:${s}`;
         }
 
@@ -819,15 +837,12 @@
                 card.onmousedown = (e) => handleCardMouseDown(e, act.id);
                 card.onmouseup = (e) => handleCardMouseUp(e, act.id);
                 card.onmouseleave = (e) => handleCardMouseLeave(e, act.id);
-                // Standard click replaced by custom logic in onmouseup or separated
                 card.onclick = (e) => handleCardClick(e, act.id);
 
                 // drag handlers
                 card.addEventListener('dragstart', (e) => {
-                    // STOP rapid add immediately if drag starts
                     clearTimeout(holdTimer);
                     if (isRapidAdding) stopRapidAdd(act.id);
-                    
                     draggingId = act.id;
                     e.dataTransfer.setData('text/plain', String(act.id));
                     card.classList.add('dragging');
@@ -844,9 +859,7 @@
 
                 card.addEventListener('dragover', (e) => {
                     e.preventDefault();
-                    // show drag-over only if dragging a different card
                     if (draggingId && draggingId !== act.id) {
-                        // compute whether to insert after or before based on mouse X
                         const rect = card.getBoundingClientRect();
                         const insertAfter = e.clientX > (rect.left + rect.width / 2);
                         card.classList.add('drag-over');
@@ -871,11 +884,9 @@
                         const insertAfter = (card.getAttribute('data-insert-after') === 'true') || (e.clientX > (rect.left + rect.width / 2));
                         reorderActivities(draggedId, act.id, false, insertAfter);
                     }
-                    // cleanup attributes
                     card.removeAttribute('data-insert-after');
                 });
 
-                // action buttons with draggable disabled
                 card.innerHTML += `
                     <div class="card-actions">
                         <button class="action-btn" draggable="false" onmousedown="event.stopPropagation()" onclick="openEditModal(${act.id}, event)">⚙️</button>
@@ -894,14 +905,13 @@
             addBtn.onclick = addNewCategory;
             addBtn.setAttribute('draggable', 'false');
 
-            // support dropping onto add button to append to end
             addBtn.addEventListener('dragover', (e) => { e.preventDefault(); addBtn.classList.add('drag-over'); });
             addBtn.addEventListener('dragleave', () => addBtn.classList.remove('drag-over'));
             addBtn.addEventListener('drop', (e) => {
                 e.preventDefault();
                 addBtn.classList.remove('drag-over');
                 const draggedId = draggingId || (e.dataTransfer.getData ? parseInt(e.dataTransfer.getData('text/plain')) : null);
-                if (draggedId) reorderActivities(draggedId, null, true, false); // append to end
+                if (draggedId) reorderActivities(draggedId, null, true, false); 
             });
 
             grid.appendChild(addBtn);
@@ -911,17 +921,16 @@
 
         // --- Rapid Add Logic ---
         function handleCardMouseDown(e, id) {
-            if (e.button !== 0) return; // Only Left Click
+            if (e.button !== 0) return; 
             isRapidAdding = false;
             ignoreNextClick = false;
 
-            // Wait 2 seconds before starting rapid add
             holdTimer = setTimeout(() => {
                 isRapidAdding = true;
-                ignoreNextClick = true; // Prevents switching task when releasing
-                rapidAddDelay = 200; // Reset speed
+                ignoreNextClick = true; 
+                rapidAddDelay = 100; // Reset speed
                 startRapidAdd(id);
-            }, 2000); 
+            }, 500); // Shorter hold time for better responsiveness
         }
 
         function handleCardMouseUp(e, id) {
@@ -948,9 +957,7 @@
             const card = document.querySelector(`.card[data-id="${id}"]`);
             if (card) card.classList.add('shaking');
 
-            // force a new segment to visually separate rapid add
-            // Mark it with a flag (optional, but good for debugging) 
-            // and ensure START time is NOW (wall clock)
+            // Create new segment immediately
             const newSegment = { 
                 id: id, 
                 duration: 0, 
@@ -960,26 +967,34 @@
                 isRapid: true
             };
             history.push(newSegment);
-            updateTimeline(false);
+            
+            // Initial render
+            updateTimeline();
 
             function rapidStep() {
                 if (!isRapidAdding) return;
 
                 const act = activities.find(a => a.id === id);
                 if (act) {
-                    act.seconds++;
-                    totalSecondsOfDay++;
+                    // Add 1 second per step
+                    const amount = 1;
+                    act.seconds += amount;
+                    totalSecondsOfDay += amount;
                     
-                    // Update the rapid segment we just created
                     const last = history[history.length - 1];
-                    last.duration++;
-                    last.endTime = Date.now(); // Update end time to current wall clock
+                    last.duration += amount;
+                    last.endTime = Date.now();
 
+                    // Apply Rolling Window Logic INSIDE rapid step loop
+                    processRollingWindow();
+
+                    // Render updates immediately (efficient since we have no CSS transitions)
                     updateCardsData();
+                    updateTimeline();
                 }
 
-                // Accelerate: Decrease delay by 10% until 30ms floor
-                rapidAddDelay = Math.max(30, rapidAddDelay * 0.9);
+                // Accelerate
+                rapidAddDelay = Math.max(1, rapidAddDelay * 0.9);
                 rapidAddTimeout = setTimeout(rapidStep, rapidAddDelay);
             }
 
@@ -995,15 +1010,13 @@
             if (card) card.classList.remove('shaking');
             
             if (isRapidAdding) {
-                // Reset main timer anchor to NOW so we don't jump time when normal tick resumes
                 lastTickTime = Date.now();
                 saveData();
-                updateTimeline(false); 
+                updateTimeline(); 
             }
             isRapidAdding = false;
         }
 
-        // sanitize inner text for safety in this example
         function escapeHtml(str) {
             if (!str) return '';
             return String(str).replace(/[&<>"'`=\/]/g, function(s) {
@@ -1033,8 +1046,6 @@
             if (activeCard) activeCard.classList.add('active');
         }
 
-        // --- Reorder logic ---
-        // reorderActivities(draggedId, targetId = null, appendToEnd = false, insertAfter = false)
         function reorderActivities(draggedId, targetId = null, appendToEnd = false, insertAfter = false) {
             const draggedIndex = activities.findIndex(a => a.id === draggedId);
             if (draggedIndex === -1) return;
@@ -1048,7 +1059,6 @@
                 if (targetIndex === -1) {
                     activities.push(item);
                 } else {
-                    // if insertAfter, put after the target
                     if (insertAfter) targetIndex = targetIndex + 1;
                     activities.splice(targetIndex, 0, item);
                 }
@@ -1056,7 +1066,7 @@
 
             saveData();
             renderCards();
-            updateTimeline(true);
+            updateTimeline();
         }
 
         // --- Timeline ---
@@ -1065,74 +1075,70 @@
         const tooltipStats = document.getElementById('tooltip-stats');
         const tooltipClock = document.getElementById('tooltip-clock');
 
-        function updateTimeline(instant = false) {
+        function updateTimeline() {
             const timeline = document.getElementById('timeline');
-
             const historyIds = new Set(history.map(h => h.uniqueId));
 
-            // 1. Remove Old
+            // Remove Old
             Array.from(timeline.children).forEach(el => {
                 const uid = parseFloat(el.dataset.uniqueId);
-                if (!historyIds.has(uid) && !el.classList.contains('shrinking')) {
-                    if (instant) {
-                        el.remove();
-                    } else {
-                        el.classList.add('shrinking');
-                        setTimeout(() => el.remove(), 500);
-                    }
+                if (!historyIds.has(uid)) {
+                    el.remove();
                 }
             });
 
-            // 2. Add/Update
+            // Add/Update
             history.forEach((segment, i) => {
                 let el = document.querySelector(`.timeline-segment[data-unique-id="${segment.uniqueId}"]`);
                 const act = activities.find(a => a.id === segment.id);
                 const color = act ? act.color : '#333';
-                const name = act ? act.name : 'Deleted';
 
                 if (!el) {
                     el = document.createElement('div');
                     el.className = 'timeline-segment';
                     el.dataset.uniqueId = segment.uniqueId;
-                    el.style.backgroundColor = color;
+                    timeline.appendChild(el);
 
-                    if (instant) {
-                        el.style.transition = 'none';
-                        el.style.flexGrow = segment.duration;
-                        timeline.appendChild(el);
-                    } else {
-                        el.style.flexGrow = 0;
-                        timeline.appendChild(el);
-                        void el.offsetWidth; // Reflow
-                    }
-
-                    el.addEventListener('mousemove', (e) => showTooltip(e, segment, name));
+                    // EVENTS
+                    el.addEventListener('mousemove', (e) => showTooltip(e, segment));
                     el.addEventListener('mouseleave', hideTooltip);
+                    
+                    el.addEventListener('click', (e) => {
+                        e.stopPropagation(); 
+                        openSegmentModal(segment.uniqueId);
+                    });
                 }
 
                 el.style.backgroundColor = color;
-
-                // UPDATE WIDTH (Using Flex Grow)
-                el.style.flexGrow = segment.duration;
-
-                if (instant) {
-                    requestAnimationFrame(() => { el.style.transition = ''; });
-                }
+                // Direct flex-grow update (float) allows smooth expansion without CSS transition
+                el.style.flexGrow = segment.duration; 
             });
         }
 
-        function showTooltip(e, segment, name) {
+        function showTooltip(e, segment) {
             tooltipEl.style.opacity = 1;
-            tooltipEl.style.left = e.clientX + 'px';
+            const x = Math.min(e.clientX, window.innerWidth - 150);
+            tooltipEl.style.left = x + 'px';
             tooltipEl.style.top = e.clientY + 'px';
+            
+            const act = activities.find(a => a.id === segment.id);
+            const name = act ? act.name : '(Deleted Activity)';
             tooltipName.innerText = name;
             
             const pct = totalSecondsOfDay > 0 ? ((segment.duration / totalSecondsOfDay) * 100).toFixed(1) : 0;
             tooltipStats.innerText = `${formatTime(segment.duration)} (${pct}%)`;
             
-            // Format timestamps for clock tooltip
             const startStr = formatClock(segment.startTime);
             const endStr = formatClock(segment.endTime);
+            
+            let hint = document.getElementById('tooltip-hint');
+            if(!hint) {
+                hint = document.createElement('span');
+                hint.id = 'tooltip-hint';
+                tooltipEl.appendChild(hint);
+            }
+            hint.innerText = "Click to Edit"; 
+
             tooltipClock.innerText = `${startStr} - ${endStr}`;
         }
 
@@ -1144,7 +1150,6 @@
         function togglePause() {
             isPaused = !isPaused;
             if (!isPaused) {
-                // If resuming, reset the anchor so we don't jump time
                 lastTickTime = Date.now();
             }
             updatePauseUI();
@@ -1155,17 +1160,16 @@
             const btn = document.getElementById('btn-pause');
             const icon = document.getElementById('pause-icon');
             if (isPaused) {
-                icon.innerText = '▶'; // Play icon
+                icon.innerText = '▶'; 
                 btn.classList.add('active');
                 document.body.classList.add('is-paused');
             } else {
-                icon.innerText = '⏸'; // Pause icon
+                icon.innerText = '⏸'; 
                 btn.classList.remove('active');
                 document.body.classList.remove('is-paused');
             }
         }
 
-        // --- B&W Toggle ---
         function toggleGrayscale() {
             isGrayscale = !isGrayscale;
             applyGrayscale();
@@ -1184,16 +1188,12 @@
         }
 
         function selectActivity(id) {
-            // Selecting an activity should immediately switch tracking
             if (isPaused) {
-                // original behavior: selecting resumes tracking
                 isPaused = false;
                 updatePauseUI();
-                // Reset anchor on resume
                 lastTickTime = Date.now();
             }
 
-            // if already active, nothing to do
             if (id === activeId && id === pendingId) {
                 pendingId = id;
                 updateActiveState();
@@ -1201,13 +1201,10 @@
                 return;
             }
 
-            // commit immediate transition: update activeId and pendingId and create a fresh history segment
             activeId = id;
             pendingId = id;
 
-            // only push a new history segment if last history item differs (prevents duplicates)
             const last = history.length ? history[history.length - 1] : null;
-            // Always create a new segment on switch to capture Start Time accurately
             if (!last || last.id !== activeId) {
                 history.push({ 
                     id: activeId, 
@@ -1223,9 +1220,7 @@
         }
 
         function tick() {
-            // STOP if paused OR if Rapid Add is active (can't track two things at once)
             if (isPaused || isRapidAdding) {
-                // Prevent jump when resuming by keeping anchor fresh
                 lastTickTime = Date.now();
                 return;
             }
@@ -1233,70 +1228,69 @@
             const now = Date.now();
             const delta = now - lastTickTime;
 
-            // Only update if at least 1 second has passed
-            if (delta >= 1000) {
-                let secondsPassed = Math.floor(delta / 1000);
+            // Updated tick: Run every 100ms (1/10th second) for smooth raw data updates
+            // We use floating point accumulation
+            const secondsPassed = delta / 1000;
+            
+            // Check for large gaps (offline/sleep)
+            if (!settings.offlineTracking && secondsPassed > 5) {
+                // If more than 5s gap and offline tracking is off, ignore gap
+                lastTickTime = now;
+                return;
+            }
+            
+            lastTickTime = now;
 
-                // --- SLEEP / SUSPENSION HANDLING ---
-                if (!settings.offlineTracking && secondsPassed > 5) {
-                    secondsPassed = 1; 
-                    lastTickTime = now;
-                } else {
-                    lastTickTime = now - (delta % 1000);
-                }
+            if (pendingId !== activeId) {
+                activeId = pendingId;
+                history.push({ 
+                    id: activeId, 
+                    duration: 0, 
+                    uniqueId: Date.now() + Math.random(),
+                    startTime: Date.now(),
+                    endTime: Date.now() 
+                });
+            }
 
-                if (pendingId !== activeId) {
-                    activeId = pendingId;
+            const currentActivity = activities.find(a => a.id === activeId);
+
+            if (!currentActivity && activities.length > 0) {
+                activeId = activities[0].id;
+                pendingId = activeId;
+                return;
+            } else if (!currentActivity && activities.length === 0) {
+                return;
+            }
+
+            // Sync catch up
+            if (history.length > 0) {
+                const last = history[history.length - 1];
+                if (last.id !== activeId || last.isRapid) {
                     history.push({ 
                         id: activeId, 
                         duration: 0, 
                         uniqueId: Date.now() + Math.random(),
                         startTime: Date.now(),
-                        endTime: Date.now() 
+                        endTime: Date.now()
                     });
+                    updateTimeline(); 
                 }
-
-                const currentActivity = activities.find(a => a.id === activeId);
-
-                if (!currentActivity && activities.length > 0) {
-                    activeId = activities[0].id;
-                    pendingId = activeId;
-                    return;
-                } else if (!currentActivity && activities.length === 0) {
-                    return;
-                }
-
-                // CATCH UP BUG FIX:
-                // If previous block was a Rapid Add (or just different ID), start new block for current ID
-                if (history.length > 0) {
-                    const last = history[history.length - 1];
-                    if (last.id !== activeId || last.isRapid) {
-                        history.push({ 
-                            id: activeId, 
-                            duration: 0, 
-                            uniqueId: Date.now() + Math.random(),
-                            startTime: Date.now(),
-                            endTime: Date.now()
-                        });
-                        updateTimeline(false); // Immediate visual update
-                    }
-                }
-
-                // Apply the calculated seconds
-                currentActivity.seconds += secondsPassed;
-                totalSecondsOfDay += secondsPassed;
-                
-                if (history.length > 0) {
-                    const last = history[history.length - 1];
-                    last.duration += secondsPassed;
-                    last.endTime = Date.now();
-                }
-
-                processRollingWindow();
-                updateCardsData();
-                updateTimeline(false);
-                saveData();
             }
+
+            // Apply float additions
+            currentActivity.seconds += secondsPassed;
+            totalSecondsOfDay += secondsPassed;
+            
+            if (history.length > 0) {
+                const last = history[history.length - 1];
+                last.duration += secondsPassed;
+                last.endTime = Date.now();
+            }
+
+            processRollingWindow();
+            updateCardsData();
+            updateTimeline();
+            saveData();
         }
 
         // --- Settings ---
@@ -1334,7 +1328,7 @@
             const val = parseInt(document.getElementById('setting-rolling-value').value);
             const unit = document.getElementById('setting-rolling-unit').value;
 
-            let totalMins = 1440; // Default 24h
+            let totalMins = 1440; 
             if (val > 0) {
                 totalMins = (unit === 'hr') ? val * 60 : val;
             }
@@ -1342,7 +1336,7 @@
 
             saveData();
             processRollingWindow();
-            updateTimeline(true);
+            updateTimeline();
             closeModal('settingsModal');
         }
 
@@ -1373,7 +1367,6 @@
             if(activities.length > 0) {
                 activeId = activities[0].id;
                 pendingId = activeId;
-                // If reset while paused, stay paused but reset values
                 if(!isPaused) {
                     activities[0].seconds = 1;
                     totalSecondsOfDay = 1;
@@ -1400,24 +1393,19 @@
                 history = [];
             }
             
-            // Reset anchor
             lastTickTime = Date.now();
 
             saveData();
 
             renderCards();
             document.getElementById('timeline').innerHTML = '';
-            document.getElementById('timeline').classList.remove('rolling-mode');
-            updateTimeline(true);
+            updateTimeline();
             closeModal('resetModal');
         }
 
         function askDeleteActivity(id, event) {
             if(event) event.stopPropagation();
             if(activities.length <= 1) { openAlert("Action Blocked", "You need at least one activity to track time."); return; }
-
-            // Block delete only if the activity is the one currently being tracked (activeId)
-            // Because selectActivity now switches active immediately, this check is accurate.
             if(id === activeId) { openAlert("Action Blocked", "You cannot delete the activity you are currently tracking. Switch to a different one first."); return; }
 
             pendingDeleteId = id;
@@ -1427,7 +1415,6 @@
         function confirmDelete() {
             if (pendingDeleteId) {
                 activities = activities.filter(a => a.id !== pendingDeleteId);
-                // if we deleted the active/pending id by some race (shouldn't happen), move to first available
                 if (!activities.find(a => a.id === activeId)) {
                     activeId = activities.length ? activities[0].id : null;
                     pendingId = activeId;
@@ -1443,6 +1430,83 @@
                 renderCards();
             }
             closeModal('deleteModal');
+        }
+
+        // --- Segment Editing Logic ---
+        let editingSegmentUniqueId = null;
+
+        function openSegmentModal(uniqueId) {
+            editingSegmentUniqueId = uniqueId;
+            const segment = history.find(h => h.uniqueId === uniqueId);
+            if (!segment) return;
+
+            const startStr = formatClock(segment.startTime);
+            const endStr = formatClock(segment.endTime);
+            const durStr = formatTime(segment.duration);
+            document.getElementById('segment-info-text').innerText = 
+                `Time: ${startStr} - ${endStr}\nDuration: ${durStr}`;
+
+            const select = document.getElementById('segment-activity-select');
+            select.innerHTML = '';
+            
+            activities.forEach(act => {
+                const opt = document.createElement('option');
+                opt.value = act.id;
+                opt.innerText = act.name;
+                if (act.id === segment.id) opt.selected = true;
+                select.appendChild(opt);
+            });
+
+            if (!activities.find(a => a.id === segment.id)) {
+                const opt = document.createElement('option');
+                opt.value = segment.id;
+                opt.innerText = "(Deleted Activity)";
+                opt.selected = true;
+                select.appendChild(opt);
+            }
+
+            document.getElementById('segmentModal').style.display = 'flex';
+        }
+
+        function saveSegmentEdit() {
+            if (!editingSegmentUniqueId) return;
+            
+            const newActId = parseInt(document.getElementById('segment-activity-select').value);
+            const segment = history.find(h => h.uniqueId === editingSegmentUniqueId);
+            
+            if (segment && !isNaN(newActId)) {
+                segment.id = newActId;
+                recalculateAllStats();
+                saveData();
+                updateTimeline(); 
+                renderCards(); 
+            }
+            closeModal('segmentModal');
+        }
+
+        function deleteSegment() {
+            if (!editingSegmentUniqueId) return;
+
+            history = history.filter(h => h.uniqueId !== editingSegmentUniqueId);
+            recalculateAllStats();
+            saveData();
+            updateTimeline();
+            renderCards();
+            closeModal('segmentModal');
+        }
+
+        function recalculateAllStats() {
+            totalSecondsOfDay = 0;
+            activities.forEach(a => a.seconds = 0);
+
+            history.forEach(seg => {
+                totalSecondsOfDay += seg.duration;
+                const act = activities.find(a => a.id === seg.id);
+                if (act) {
+                    act.seconds += seg.duration;
+                }
+            });
+            processRollingWindow();
         }
 
         // --- Modals Global Handlers ---
@@ -1463,13 +1527,16 @@
                 if (event.key === "Escape") closeModal('settingsModal');
                 if (event.key === "Enter") saveSettings();
             }
+            else if (document.getElementById('segmentModal').style.display === 'flex') {
+                if (event.key === "Escape") closeModal('segmentModal');
+                if (event.key === "Enter") saveSegmentEdit();
+            }
             else if (document.getElementById('alertModal').style.display === 'flex') {
                 if (event.key === "Escape" || event.key === "Enter") closeModal('alertModal');
             }
             else if (document.activeElement.classList.contains('app-title-input')) {
                 if (event.key === "Enter") document.activeElement.blur();
             }
-            // Hotkey 'P' for pause, but don't trigger if a modal is open
             else if (event.key.toLowerCase() === 'p' && document.querySelector('.modal-overlay[style*="flex"]') === null) {
                 togglePause();
             }
@@ -1509,6 +1576,7 @@
             document.getElementById(modalId).style.display = 'none';
             if (modalId === 'editModal') { editingId = null; pendingCreation = null; }
             if (modalId === 'deleteModal') { pendingDeleteId = null; }
+            if (modalId === 'segmentModal') { editingSegmentUniqueId = null; }
         }
 
         function saveEdit() {
@@ -1526,7 +1594,7 @@
                     if(newColor) act.color = newColor;
                 }
                 renderCards();
-                updateTimeline(false);
+                updateTimeline();
             }
             saveData();
             closeModal('editModal');
@@ -1535,8 +1603,9 @@
         // --- Init ---
         loadData();
         renderCards();
-        updateTimeline(true); // Instant load
-        setInterval(tick, 1000);
+        updateTimeline();
+        // High frequency tick (100ms) for smooth raw data updates
+        setInterval(tick, 100);
     </script>
 </body>
 </html>
