@@ -976,8 +976,16 @@
 
                 const act = activities.find(a => a.id === id);
                 if (act) {
-                    // Add 1 second per step
-                    const amount = 1;
+                    // --- CHANGED LOGIC START ---
+                    
+                    // We calculate the amount dynamically based on the current delay.
+                    // As the delay gets smaller (faster), the amount added gets larger.
+                    // Start: 100/100 = 1 second added.
+                    // Peak: 100/1 = 100 seconds added per tick.
+                    const amount = Math.ceil(100 / Math.max(0.5, rapidAddDelay)); 
+
+                    // --- CHANGED LOGIC END ---
+
                     act.seconds += amount;
                     totalSecondsOfDay += amount;
                     
@@ -988,13 +996,16 @@
                     // Apply Rolling Window Logic INSIDE rapid step loop
                     processRollingWindow();
 
-                    // Render updates immediately (efficient since we have no CSS transitions)
+                    // Render updates immediately
                     updateCardsData();
                     updateTimeline();
                 }
 
                 // Accelerate
-                rapidAddDelay = Math.max(1, rapidAddDelay * 0.9);
+                // NOTE: We limit the lowest delay to 5ms. 
+                // Going lower than 5ms creates lag because the browser can't render that fast.
+                // The speed now comes from the 'amount' variable increasing, not the frequency.
+                rapidAddDelay = Math.max(5, rapidAddDelay * 0.9);
                 rapidAddTimeout = setTimeout(rapidStep, rapidAddDelay);
             }
 
