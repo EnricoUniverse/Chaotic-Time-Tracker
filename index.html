@@ -16,6 +16,7 @@
             --text-main: #E0E0E0;
             --accent: #4CAF50;
             --pause-color: #FFC107;
+            --remove-color: #D32F2F; 
         }
 
         body {
@@ -258,7 +259,7 @@
             box-shadow: 0 10px 0 var(--shadow-color);
         }
 
-        /* SHAKE ANIMATION for Rapid Add */
+        /* SHAKE ANIMATION for Rapid Add/Remove */
         @keyframes shake {
             0% { translate: 1px 1px; }
             10% { translate: -1px -2px; }
@@ -279,6 +280,12 @@
             border-color: var(--pause-color) !important;
             box-shadow: 0 0 15px var(--pause-color);
             z-index: 50;
+        }
+
+        /* Specific style for removing state */
+        .card.shaking.removing {
+            border-color: var(--remove-color) !important;
+            box-shadow: 0 0 15px var(--remove-color);
         }
 
         /* Dim cards when paused to indicate inactivity */
@@ -604,10 +611,11 @@
         // Timer anchor for accurate delta tracking
         let lastTickTime = Date.now();
 
-        // Rapid Add State
+        // Rapid Add/Remove State
         let holdTimer = null;
-        let rapidAddTimeout = null; 
+        let rapidActionTimeout = null; 
         let isRapidAdding = false;
+        let isRapidRemoving = false;
         let ignoreNextClick = false;
         let rapidAddDelay = 100; // Start fast
 
@@ -727,7 +735,7 @@
         // --- Core Helpers ---
         function formatTime(totalSeconds) {
             // Use floor because we might have float seconds
-            const sec = Math.floor(totalSeconds);
+            const sec = Math.floor(Math.max(0, totalSeconds));
             const h = Math.floor(sec / 3600).toString().padStart(2, '0');
             const m = Math.floor((sec % 3600) / 60).toString().padStart(2, '0');
             const s = (sec % 60).toString().padStart(2, '0');
@@ -826,6 +834,9 @@
                 card.style.backgroundColor = act.color;
                 card.style.color = getTextColor(act.color);
                 card.setAttribute('draggable', 'true');
+                
+                // Prevent context menu on right click to allow rapid remove behavior
+                card.setAttribute('oncontextmenu', 'return false;');
 
                 // create drag hint element
                 const hint = document.createElement('div');
@@ -833,7 +844,7 @@
                 hint.innerText = '⟵'; // default; replaced on dragover
                 card.appendChild(hint);
 
-                // Mouse Event Handlers for Rapid Add
+                // Mouse Event Handlers for Rapid Add/Remove
                 card.onmousedown = (e) => handleCardMouseDown(e, act.id);
                 card.onmouseup = (e) => handleCardMouseUp(e, act.id);
                 card.onmouseleave = (e) => handleCardMouseLeave(e, act.id);
@@ -842,7 +853,7 @@
                 // drag handlers
                 card.addEventListener('dragstart', (e) => {
                     clearTimeout(holdTimer);
-                    if (isRapidAdding) stopRapidAdd(act.id);
+                    if (isRapidAdding || isRapidRemoving) stopRapidAction(act.id);
                     draggingId = act.id;
                     e.dataTransfer.setData('text/plain', String(act.id));
                     card.classList.add('dragging');
@@ -919,29 +930,39 @@
             updateCardsData();
         }
 
-        // --- Rapid Add Logic ---
+        // --- Rapid Add/Remove Logic ---
         function handleCardMouseDown(e, id) {
-            if (e.button !== 0) return; 
+            // e.button: 0 = Left, 2 = Right
             isRapidAdding = false;
+            isRapidRemoving = false;
             ignoreNextClick = false;
 
-            holdTimer = setTimeout(() => {
-                isRapidAdding = true;
-                ignoreNextClick = true; 
-                rapidAddDelay = 100; // Reset speed
-                startRapidAdd(id);
-            }, 500); // Shorter hold time for better responsiveness
+            if (e.button === 0) { // Left Click (Add)
+                holdTimer = setTimeout(() => {
+                    isRapidAdding = true;
+                    ignoreNextClick = true; 
+                    rapidAddDelay = 100; // Reset speed
+                    startRapidAdd(id);
+                }, 500); 
+            } else if (e.button === 2) { // Right Click (Remove)
+                holdTimer = setTimeout(() => {
+                    isRapidRemoving = true;
+                    ignoreNextClick = true;
+                    rapidAddDelay = 100; // Reset speed
+                    startRapidRemove(id);
+                }, 500);
+            }
         }
 
         function handleCardMouseUp(e, id) {
             clearTimeout(holdTimer);
-            stopRapidAdd(id);
+            stopRapidAction(id);
         }
 
         function handleCardMouseLeave(e, id) {
             clearTimeout(holdTimer);
-            if (isRapidAdding) {
-                stopRapidAdd(id);
+            if (isRapidAdding || isRapidRemoving) {
+                stopRapidAction(id);
             }
         }
 
@@ -976,15 +997,7 @@
 
                 const act = activities.find(a => a.id === id);
                 if (act) {
-                    // --- CHANGED LOGIC START ---
-                    
-                    // We calculate the amount dynamically based on the current delay.
-                    // As the delay gets smaller (faster), the amount added gets larger.
-                    // Start: 100/100 = 1 second added.
-                    // Peak: 100/1 = 100 seconds added per tick.
                     const amount = Math.ceil(100 / Math.max(0.5, rapidAddDelay)); 
-
-                    // --- CHANGED LOGIC END ---
 
                     act.seconds += amount;
                     totalSecondsOfDay += amount;
@@ -1002,30 +1015,89 @@
                 }
 
                 // Accelerate
-                // NOTE: We limit the lowest delay to 5ms. 
-                // Going lower than 5ms creates lag because the browser can't render that fast.
-                // The speed now comes from the 'amount' variable increasing, not the frequency.
                 rapidAddDelay = Math.max(5, rapidAddDelay * 0.9);
-                rapidAddTimeout = setTimeout(rapidStep, rapidAddDelay);
+                rapidActionTimeout = setTimeout(rapidStep, rapidAddDelay);
             }
 
             rapidStep();
         }
 
-        function stopRapidAdd(id) {
-            if (rapidAddTimeout) {
-                clearTimeout(rapidAddTimeout);
-                rapidAddTimeout = null;
+        function startRapidRemove(id) {
+            const card = document.querySelector(`.card[data-id="${id}"]`);
+            if (card) {
+                card.classList.add('shaking');
+                card.classList.add('removing'); // Red glow
+            }
+
+            function rapidRemoveStep() {
+                if (!isRapidRemoving) return;
+
+                // Find the very last segment in history that matches this ID
+                let segmentIndex = -1;
+                for(let i = history.length - 1; i >= 0; i--) {
+                    if (history[i].id === id) {
+                        segmentIndex = i;
+                        break;
+                    }
+                }
+
+                if (segmentIndex !== -1) {
+                    const segment = history[segmentIndex];
+                    const act = activities.find(a => a.id === id);
+                    
+                    // Calc amount same as adding
+                    const amount = Math.ceil(100 / Math.max(0.5, rapidAddDelay));
+                    
+                    // Do not reduce below zero
+                    const reduceBy = Math.min(amount, segment.duration);
+                    
+                    if (reduceBy > 0) {
+                        segment.duration -= reduceBy;
+                        // Reduce the end time to reflect shortening from the "end"
+                        segment.endTime -= (reduceBy * 1000); 
+
+                        if (act) act.seconds = Math.max(0, act.seconds - reduceBy);
+                        totalSecondsOfDay = Math.max(0, totalSecondsOfDay - reduceBy);
+
+                        // If segment is essentially empty/gone, remove it
+                        if (segment.duration <= 0.1) {
+                            history.splice(segmentIndex, 1);
+                        }
+                        
+                        updateCardsData();
+                        updateTimeline();
+                    } else {
+                        // Cleanup zero duration segments if they exist
+                        history.splice(segmentIndex, 1);
+                    }
+                }
+
+                // Accelerate
+                rapidAddDelay = Math.max(5, rapidAddDelay * 0.9);
+                rapidActionTimeout = setTimeout(rapidRemoveStep, rapidAddDelay);
+            }
+
+            rapidRemoveStep();
+        }
+
+        function stopRapidAction(id) {
+            if (rapidActionTimeout) {
+                clearTimeout(rapidActionTimeout);
+                rapidActionTimeout = null;
             }
             const card = document.querySelector(`.card[data-id="${id}"]`);
-            if (card) card.classList.remove('shaking');
+            if (card) {
+                card.classList.remove('shaking');
+                card.classList.remove('removing');
+            }
             
-            if (isRapidAdding) {
+            if (isRapidAdding || isRapidRemoving) {
                 lastTickTime = Date.now();
                 saveData();
                 updateTimeline(); 
             }
             isRapidAdding = false;
+            isRapidRemoving = false;
         }
 
         function escapeHtml(str) {
@@ -1231,7 +1303,7 @@
         }
 
         function tick() {
-            if (isPaused || isRapidAdding) {
+            if (isPaused || isRapidAdding || isRapidRemoving) {
                 lastTickTime = Date.now();
                 return;
             }
